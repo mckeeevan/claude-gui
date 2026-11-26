@@ -44,6 +44,7 @@ viewer/            the page
   src/model.js     pure data logic (parsing, merging, ELK layout, headline, agent cards), no DOM
   src/structure-chart.js, src/agent-chart.js, src/panels.js   reusable D3 views
   src/flip.js      glides HTML rows and cards to their new places
+  src/panes.js, src/splitters.js   draggable dividers: pure sizing logic, and the pointer and key wiring
   src/app.js       data sources (artifact database, file polling, demo) and wiring
   test/            node:test unit tests and jsdom view tests
   serve.py         local server for one project
@@ -101,6 +102,10 @@ The page uses the database when it has one and falls back to polling `state/*.ya
 The page loads D3, js-yaml and elkjs from jsDelivr, so it needs internet access. Opening `index.html` directly from disk won't work, because browsers block ES modules on `file://`. Use `serve.py`.
 
 After editing `index.template.html` or the example files, run `python3 viewer/build.py`.
+
+## Resizing
+
+On wide screens, drag the lines between the columns, or between the panels in a side column, to give room to what matters now. Pull a panel down to its title to fold it. Double-click a line to put it back; arrow keys work on a focused line. Sizes are kept in this browser.
 
 ## If something looks wrong
 
