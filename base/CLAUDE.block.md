@@ -1,0 +1,17 @@
+## How to work here
+
+This section is kept up to date by claude-gui's `install.py`; edit outside the markers. The rules themselves live in `.claude/rules/`; this list only says when each applies.
+
+**Always**
+- `.claude/rules/coding.md`: change as little as the task needs, readable code, edge cases, no secrets.
+- `.claude/rules/testing.md`: tests that can fail, and the test-first cycle for new code.
+- Keep the Work View current (the `claude-gui-state` skill): `.claude-gui/state.yaml`, or `$WORKVIEW_DIR`.
+- Keep replies short: the result, the link, and anything the person needs to do.
+
+**When the task calls for it**
+- Asked to research, plan or scope something bigger than a quick fix: use the `task-researcher` and `task-planner` subagents (`.claude/agents/`). Planning files go in `.planning/`.
+- Carrying out a plan (`/implement-*`): `.claude/rules/implementing-plans.md`. Planning ends with the phases and to-dos laid out and a design outline (a Claude Design mockup, or an outline doc when there is nothing to see); stop there for the person's OK; after that, run every phase on a work branch, committing each one, and stop again before merging or touching the main branch.
+- Writing a subagent, command, skill or a prompt inside an app: `.claude/rules/prompts-and-agents.md`.
+- D3, charts or data graphics: the `write-good-d3` skill, and `editorial-d3-stories` (or `editorial-d3-observable` in Observable) for editorial or animated graphics.
+
+The project's own instructions in this file, outside these markers, win where they differ.

@@ -156,7 +156,7 @@ Event fields: `t` (ISO time), `agent`, `type` (prompt, read, edit, run, search, 
 
 Do all of this yourself; the person should not have to.
 
-1. Install or update: `git clone https://github.com/mckeeevan/claude-gui ~/claude-gui` (or `git -C ~/claude-gui pull` if it is already there), then `python3 ~/claude-gui/install.py <project>`. It puts the hook, the viewer and this skill in the project's `.claude/`, registers the hook in `.claude/settings.json`, and creates `.claude-gui/` with a starter `state.yaml`. Run it again to update; it never overwrites `state.yaml` or the event log.
+1. Install or update: `git clone https://github.com/mckeeevan/claude-gui ~/claude-gui` (or `git -C ~/claude-gui pull` if it is already there), then `python3 ~/claude-gui/install.py <project>`. It puts the hook, the viewer and this skill in the project's `.claude/`, registers the hook in `.claude/settings.json`, creates `.claude-gui/` with a starter `state.yaml`, and adds the working base (researcher and planner subagents, `.claude/rules/`, and a section in `CLAUDE.md`). Run it again to update; it never overwrites `state.yaml` or the event log.
 2. Fill in `state.yaml`: goal, a first sketch of the structure with `paths` for every part, agents and todos.
 3. Turn on coverage (see "Turning on coverage").
 4. Run the tests once and check the viewer shows coverage: `python3 .claude/claude-gui/viewer/serve.py .`
