@@ -8,6 +8,7 @@ import { structureMap, coverageColor } from "./structure-chart.js";
 import { agentCards } from "./agent-chart.js";
 import { todoList, stackedBar, activityFeed, agentCard, testsPanel } from "./panels.js";
 import { DEMO_SCRIPT } from "./demo.js";
+import { splitters } from "./splitters.js";
 
 const CFG = {
   state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", heartbeat: "state/heartbeat", poll: 1000,
@@ -217,7 +218,9 @@ select("#zoom").on("click", function () {
   select(this).attr("aria-pressed", String(full)).text(full ? "Fit to screen" : "Full size");
 });
 let resizeTimer = null;
-window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 200); });
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { panes.refresh(); render(); }, 200); });
+// Dividers between the columns and panels; the map refits once a drag ends.
+const panes = splitters(document, { active: () => !!wide?.matches, onChange: () => render() });
 
 // On a narrow screen the map scrolls sideways; bring the focus into view when it
 // changes, but leave the person's own scrolling alone otherwise.
