@@ -298,7 +298,7 @@ test("isFolded folds finished branches unless opened or on the focus path", () =
 
 test("layoutStructure returns an empty layout for an empty structure", async () => {
   const l = await layoutStructure(buildModel({}, [], { now: NOW }), { elk });
-  assert.deepEqual([l.nodes, l.edges, l.tokens, l.bullpen, l.width, l.height], [[], [], [], null, 0, 0]);
+  assert.deepEqual([l.nodes, l.edges, l.tokens, l.shelf, l.width, l.height], [[], [], [], null, 0, 0]);
 });
 
 test("layoutStructure nests open groups and folds finished ones", async () => {
@@ -316,7 +316,7 @@ test("layoutStructure nests open groups and folds finished ones", async () => {
 });
 
 test("layoutStructure merges dependencies into folded groups and sums their weight", async () => {
-  const l = await layoutStructure(buildModel(STATE, EVENTS, { now: NOW }), { elk });
+  const l = await layoutStructure(buildModel(STATE, EVENTS, { now: NOW }), { elk, shelf: false });
   const ids = l.edges.map((e) => e.id).sort();
   assert.deepEqual(ids, ["ui.list>fmt", "ui.list>ui.tree", "ui.tree>docs", "ui.tree>fmt"]);
   assert.equal(l.edges.find((e) => e.id === "ui.tree>docs").kind, "events");
@@ -339,7 +339,7 @@ test("layoutStructure routes every arrow from its source box to its target box",
 
 test("layoutStructure drops arrows that folding turns inward", async () => {
   const m = buildModel(STATE, EVENTS, { now: NOW });
-  const l = await layoutStructure(m, { elk, collapsed: new Set(["ui"]) });
+  const l = await layoutStructure(m, { elk, collapsed: new Set(["ui"]), shelf: false });
   assert.ok(!l.edges.some((e) => e.source === e.target));
   assert.deepEqual(l.edges.map((e) => e.id).sort(), ["ui>docs", "ui>fmt"]);
   assert.equal(l.edges.find((e) => e.id === "ui>fmt").weight, 2);
@@ -367,14 +367,83 @@ test("layoutStructure gives a part with agents on it a lane for their tokens", a
   assert.ok(tok.main.x > b.x && tok.main.x < b.x + b.width && tok.main.y > b.y + 52 && tok.main.y < b.y + b.height);
 });
 
-test("layoutStructure parks idle agents in the bullpen under the map", async () => {
+test("layoutStructure leaves agents with no part off the map", async () => {
   const state = { ...STATE, agents: [...STATE.agents, { id: "rest", name: "Rest", status: "idle" }] };
   const l = await layoutStructure(buildModel(state, EVENTS, { now: NOW }), { elk });
-  const rest = l.tokens.find((t) => t.id === "rest");
-  assert.equal(rest.parked, true);
-  assert.ok(rest.y > l.bullpen.y && rest.y < l.bullpen.y + l.bullpen.height);
-  assert.ok(l.bullpen.y >= Math.max(...l.nodes.map((n) => n.y + n.height)));
+  assert.ok(!l.tokens.some((t) => t.id === "rest")); // the Agents panel lists them instead
   assert.ok(!l.tokens.some((t) => t.id === "user")); // people are not agents on the map
+  assert.equal(l.bullpen, null);
+});
+
+test("layoutStructure moves finished branches nobody is on to the done shelf", async () => {
+  const l = await layoutStructure(buildModel(STATE, EVENTS, { now: NOW }), { elk });
+  const fmt = l.nodes.find((n) => n.id === "fmt");
+  assert.equal(fmt.shelved, true);
+  assert.equal(fmt.compact, true);
+  assert.equal(l.shelf.count, 1);
+  assert.ok(fmt.x >= l.shelf.x && fmt.x + fmt.width <= l.shelf.x + l.shelf.width + 1e-6);
+  assert.ok(fmt.y >= l.shelf.y && fmt.y + fmt.height <= l.shelf.y + l.shelf.height + 1e-6);
+  assert.ok(!l.edges.some((e) => e.source === "fmt" || e.target === "fmt")); // history draws no arrows
+  for (const n of l.nodes.filter((x) => !x.shelved)) assert.ok(n.y + n.height <= l.shelf.y || n.x + n.width <= l.shelf.x, n.id);
+});
+
+test("layoutStructure brings a shelved branch back when it is opened, worked on or failing", async () => {
+  const opened = await layoutStructure(buildModel(STATE, EVENTS, { now: NOW }), { elk, expanded: new Set(["fmt"]) });
+  assert.equal(opened.shelf, null);
+  assert.equal(opened.nodes.find((n) => n.id === "fmt").container, true);
+  const state = structuredClone(STATE);
+  state.agents.push({ id: "f", name: "F", nodes: ["fmt.a"] });
+  const worked = await layoutStructure(buildModel(state, [], { now: NOW }), { elk });
+  assert.equal(worked.nodes.find((n) => n.id === "fmt").shelved, false);
+});
+
+test("layoutStructure keeps everything in the map when everything is finished", async () => {
+  const state = { project: "P", structure: [{ id: "a", name: "A", status: "done" }, { id: "b", name: "B", status: "done" }] };
+  const l = await layoutStructure(buildModel(state, [], { now: NOW }), { elk });
+  assert.equal(l.shelf, null);
+  assert.ok(l.nodes.every((n) => !n.shelved && n.compact));
+});
+
+test("layoutStructure puts the shelf beside a wide space and under a tall one", async () => {
+  const state = { project: "P", structure: [
+    { id: "w", name: "Working", status: "active", children: [{ id: "w1", name: "One", status: "active", uses: ["w2"] }, { id: "w2", name: "Two", uses: ["w3"] }, { id: "w3", name: "Three" }] },
+    ...["a", "b", "c", "d"].map((id) => ({ id, name: `Done ${id}`, status: "done" })),
+  ] };
+  const m = buildModel(state, [], { now: NOW });
+  const wide = await layoutStructure(m, { elk, aspect: 4 });
+  const tall = await layoutStructure(m, { elk, aspect: 0.4 });
+  assert.equal(wide.shelf.side, "right");
+  assert.equal(tall.shelf.side, "below");
+  assert.equal(wide.shelf.count, 4);
+});
+
+test("layoutStructure shrinks finished parts inside open groups to chips", async () => {
+  const state = structuredClone(STATE);
+  state.structure[0].children.push({ id: "ui.old", name: "Old", status: "done" });
+  const l = await layoutStructure(buildModel(state, EVENTS, { now: NOW }), { elk });
+  const by = Object.fromEntries(l.nodes.map((n) => [n.id, n]));
+  assert.equal(by["ui.old"].compact, true);
+  assert.equal(by["ui.old"].height, 30);
+  assert.equal(by["ui.tree"].compact, false); // the focus keeps full size
+});
+
+test("layoutStructure packs a group with no arrows inside into a grid", async () => {
+  const kids = Array.from({ length: 6 }, (_, i) => ({ id: `g.${i}`, name: `Part ${i}`, status: "planned" }));
+  kids[0].uses = ["other"];
+  const state = { project: "P", structure: [{ id: "g", name: "Group", status: "active", children: kids }, { id: "other", name: "Other", status: "active" }] };
+  const l = await layoutStructure(buildModel(state, [], { now: NOW }), { elk });
+  const by = Object.fromEntries(l.nodes.map((n) => [n.id, n]));
+  assert.equal(by.g.packed, true);
+  const rows = new Set(kids.map((k) => by[k.id].y));
+  const cols = new Set(kids.map((k) => by[k.id].x));
+  assert.ok(rows.size > 1 && cols.size > 1, "children sit in rows and columns");
+  for (const k of kids) {
+    const b = by[k.id];
+    assert.ok(b.x >= by.g.x && b.x + b.width <= by.g.x + by.g.width + 1e-6 && b.y >= by.g.y && b.y + b.height <= by.g.y + by.g.height + 1e-6, k.id);
+  }
+  assert.deepEqual(l.edges.map((e) => e.id), ["g>other"]); // the child's arrow is drawn from its group
+  const unpacked = await layoutStructure(buildModel({ ...state, structure: [{ ...state.structure[0], children: [{ ...kids[1], uses: ["g.2"] }, ...kids.slice(2)] }, state.structure[1]] }, [], { now: NOW }), { elk });
+  assert.equal(unpacked.nodes.find((n) => n.id === "g").packed, false);
 });
 
 test("layoutStructure puts an agent on a folded group when its part is hidden inside", async () => {

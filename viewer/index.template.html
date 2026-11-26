@@ -160,9 +160,13 @@ h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -
 .arrow.cold path { fill: var(--context) }
 
 /* agents on the map */
-.bullpen .pen { fill: var(--rule-soft) }
-.bullpen .pen-title { font: 700 11px var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--grey) }
-.bullpen .pen-note { font: 400 11px var(--f-sans); fill: var(--grey) }
+.shelf .shelf-bg { fill: var(--rule-soft); rx: 3 }
+.shelf .shelf-title { font: 700 10.5px var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--grey) }
+.shelf .shelf-count { font: 500 10.5px var(--f-mono); fill: var(--grey); font-variant-numeric: tabular-nums }
+.leaf.compact .name { font-size: 12px; font-weight: 500 }
+.leaf.compact.st-done .box { fill: var(--done); stroke: none }
+.leaf.shelved .box { fill: var(--paper-alt); stroke: var(--rule) }
+.leaf.shelved .name { fill: var(--ink-soft) }
 .token { cursor: pointer; transition: opacity .25s }
 .token .disc { fill: var(--ink); stroke: var(--paper-alt); stroke-width: 2 }
 .token .ini { font: 700 10.5px var(--f-sans); fill: var(--paper-alt); text-anchor: middle; pointer-events: none }
