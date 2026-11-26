@@ -107,7 +107,7 @@ h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -
 .minimap .leaf.st-active { fill: var(--orange); stroke: var(--orange) }
 .minimap .leaf.st-done { fill: var(--done); stroke: var(--done) }
 .minimap .leaf.st-blocked { stroke: var(--red) }
-.minimap .pen { fill: var(--rule-soft) }
+.minimap .shelf { fill: var(--rule-soft) }
 .minimap .view { fill: var(--navy); fill-opacity: .08; stroke: var(--navy); stroke-width: 1.5; vector-effect: non-scaling-stroke }
 @media (prefers-reduced-motion: reduce) { .minimap { transition: none } }
 /* Shrinking the whole map to a phone would take its text under 10px, so narrow screens scroll it instead. */
@@ -165,7 +165,7 @@ h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -
 .shelf .shelf-count { font: 500 10.5px var(--f-mono); fill: var(--grey); font-variant-numeric: tabular-nums }
 .leaf.compact .name { font-size: 12px; font-weight: 500 }
 .leaf.compact.st-done .box { fill: var(--done); stroke: none }
-.leaf.shelved .box { fill: var(--paper-alt); stroke: var(--rule) }
+.leaf.shelved.compact .box { fill: var(--paper-alt); stroke: var(--rule); stroke-width: 1; stroke-dasharray: none }
 .leaf.shelved .name { fill: var(--ink-soft) }
 .token { cursor: pointer; transition: opacity .25s }
 .token .disc { fill: var(--ink); stroke: var(--paper-alt); stroke-width: 2 }

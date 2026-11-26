@@ -31,6 +31,11 @@ test("viewportOf converts the visible slice of a scrolled map to layout units", 
   assert.deepEqual(v, { x: 94, y: 30, width: 150, height: 100, full: false });
 });
 
+test("viewportOf ignores a sliver hidden under a scrollbar", () => {
+  const v = viewportOf({ left: 0, top: 0, width: 767, height: 379 }, { left: 0, top: 0, right: 764, bottom: 600 }, [0, 0, 767, 379]);
+  assert.equal(v.full, true);
+});
+
 test("viewportOf treats an unmeasured map as fully visible", () => {
   assert.equal(viewportOf({ left: 0, top: 0, width: 0, height: 0 }, { left: 0, top: 0, right: 10, bottom: 10 }, [0, 0, 100, 100]).full, true);
 });
@@ -45,7 +50,7 @@ test("minimap draws every box and the viewport, and shows only when the map does
   const chart = minimap().duration(0);
   select(el).datum({ layout, view: { x: 0, y: 0, width: 50, height: 40, full: false } }).call(chart);
   assert.equal(el.classList.contains("on"), true);
-  assert.equal(el.querySelectorAll("g.boxes rect").length, layout.nodes.length + (layout.bullpen?.count ? 1 : 0)); // the idle strip too
+  assert.equal(el.querySelectorAll("g.boxes rect").length, layout.nodes.length + (layout.shelf ? 1 : 0)); // the done shelf too
   assert.ok(el.querySelector("g.boxes rect.leaf.st-active"));
   assert.equal(el.querySelector("rect.view").getAttribute("width"), "50");
   const svg = el.querySelector("svg.mini");

@@ -231,8 +231,9 @@ window.addEventListener("scroll", queueInset, { passive: true });
 let direction = "DOWN";
 const wide = window.matchMedia?.("(min-width: 1100px)");
 async function layoutForSpace(m) {
-  const opts = { elk, collapsed, expanded };
   const box = document.querySelector(".map-scroll");
+  // The box's shape decides whether the done shelf sits beside the map or under it.
+  const opts = { elk, collapsed, expanded, aspect: box && box.clientHeight ? box.clientWidth / box.clientHeight : null };
   if (!wide?.matches || !box || !box.clientHeight) return layoutStructure(m, { ...opts, direction: "DOWN" });
   const [down, right] = await Promise.all([layoutStructure(m, { ...opts, direction: "DOWN" }), layoutStructure(m, { ...opts, direction: "RIGHT" })]);
   const fit = (l) => Math.min(box.clientWidth / (l.width + 12), box.clientHeight / (l.height + 26));

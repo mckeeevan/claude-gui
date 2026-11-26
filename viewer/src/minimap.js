@@ -21,8 +21,10 @@ export function viewportOf(map, visible, viewBox) {
   const y0 = Math.max(0, visible.top - map.top);
   const x1 = Math.min(map.width, visible.right - map.left);
   const y1 = Math.min(map.height, visible.bottom - map.top);
-  const slack = 2; // px; rounding in the browser should not count as "partly hidden"
-  const full = x0 <= slack && y0 <= slack && x1 >= map.width - slack && y1 >= map.height - slack;
+  // A sliver hidden under a scrollbar or lost to rounding still counts as all on screen.
+  const sx = Math.max(4, map.width * 0.02);
+  const sy = Math.max(4, map.height * 0.02);
+  const full = x0 <= sx && y0 <= sy && x1 >= map.width - sx && y1 >= map.height - sy;
   return { x: vx + x0 / k, y: vy + y0 / k, width: Math.max(0, x1 - x0) / k, height: Math.max(0, y1 - y0) / k, full };
 }
 
@@ -68,9 +70,10 @@ export function minimap() {
       tr(svg).attr("width", w).attr("height", h);
       svg.attr("viewBox", `0 0 ${layout.width} ${layout.height}`);
       // Keyed by part id, so boxes glide with the map instead of being redrawn.
+      // The shelf goes first so its chips draw on top of it.
       const boxes = [
+        ...(layout.shelf ? [{ id: "\u0000shelf", ...layout.shelf, kind: "shelf" }] : []),
         ...layout.nodes.map((n) => ({ ...n, kind: n.container ? "group" : `leaf st-${n.status}` })),
-        ...(layout.bullpen && layout.bullpen.count ? [{ id: "\u0000pen", ...layout.bullpen, kind: "pen" }] : []),
       ];
       svg.select("g.boxes").selectAll("rect")
         .data(boxes, (d) => d.id)

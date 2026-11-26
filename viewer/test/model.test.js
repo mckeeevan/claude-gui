@@ -404,6 +404,13 @@ test("layoutStructure keeps everything in the map when everything is finished", 
   assert.ok(l.nodes.every((n) => !n.shelved && n.compact));
 });
 
+test("layoutStructure never marks a shelved single part as a folded group", async () => {
+  const state = { project: "P", structure: [{ id: "a", name: "A", status: "active" }, { id: "b", name: "B", status: "done" }] };
+  const b = (await layoutStructure(buildModel(state, [], { now: NOW }), { elk })).nodes.find((n) => n.id === "b");
+  assert.equal(b.shelved, true);
+  assert.equal(b.folded, false); // a folded part needs a roll-up, which a single part does not have
+});
+
 test("layoutStructure puts the shelf beside a wide space and under a tall one", async () => {
   const state = { project: "P", structure: [
     { id: "w", name: "Working", status: "active", children: [{ id: "w1", name: "One", status: "active", uses: ["w2"] }, { id: "w2", name: "Two", uses: ["w3"] }, { id: "w3", name: "Three" }] },

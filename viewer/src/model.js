@@ -743,7 +743,7 @@ export async function layoutStructure(model, {
     return { width: Math.max(minLeafWidth, n.name.length * charWidth + 32, here ? laneWidth : 0), height: leafHeight + (here ? lane : 0) };
   };
   const visit = (n, depth, parentId, onShelf) => {
-    const folded = onShelf || isFolded(n, foldOpts);
+    const folded = (onShelf && n.children.length > 0) || isFolded(n, foldOpts);
     const container = n.children.length > 0 && !folded;
     // A finished part with nobody on it shrinks to a chip; the focus and failures keep full size.
     const compact = !container && allDone(n) && n.id !== model.focus && !standing(n, folded) && !failingIn(n, model.tests?.byNode, folded);
