@@ -37,7 +37,7 @@ Decide at the start of every task, without asking the person, and set it up if i
 
 Update it at these moments. Each update is one small Edit, not a rewrite.
 
-1. **At the start of a task.** Set `session.goal` and `session.phase`. If `structure` is empty or stale, sketch the parts of the app you expect to touch. If the project has tests and a plain test run writes no coverage report, turn coverage on now, without asking (how, per runner, is under "Turning on coverage").
+1. **At the start of a task.** Set `session.goal` and `session.phase`, and break the ask into todos with sub-items before you start (see the todo rules below). If `structure` is empty or stale, sketch the parts of the app you expect to touch. If the project has tests and a plain test run writes no coverage report, turn coverage on now, without asking (how, per runner, is under "Turning on coverage").
 2. **When your focus moves** to a different part of the app. Set `session.focus` to that part's id and mark the part `active`.
 3. **When your thinking changes direction**: a decision, a doubt, a new plan. Rewrite `session.thinking` in one to three plain sentences, as you'd say it to a colleague looking over your shoulder.
 4. **When you learn the app's shape.** Add, rename or regroup parts in `structure`. Add `paths` globs so the hooks can color the right part when files are edited, and `uses` so the map can draw what depends on what.
@@ -115,7 +115,13 @@ todos:                # the one global list for the session
     children:           # sub-todos; a parent without a status takes it from these
       - { id: t1a, text: Route and handler, status: done }
       - { id: t1b, text: Session cookie, status: in_progress }
-  - { id: t2, text: Write tests for it, status: pending, node: api.auth }
+      - { id: t1c, text: Tests for expired and missing sessions, status: pending }
+  - id: t2
+    text: Send password reset mail
+    node: mail
+    children:
+      - { id: t2a, text: Pick a mail provider, status: blocked, note: Waiting on the person to choose }
+      - { id: t2b, text: Reset link and token expiry, status: pending }
   # status: pending | in_progress | done | blocked; note: optional
 ```
 
@@ -124,7 +130,8 @@ Rules that keep the page readable:
 - Model the app the way a person would explain it: 3 to 8 top-level parts, each with a few children. Group files under parts with `paths`; don't list every file.
 - Keep ids stable. Renaming an id makes the page treat it as a new part.
 - Only one or two parts should be `active` at once. When you move on, set the old one back to `planned` or forward to `done`.
-- Keep todos to things a person would recognize as steps, about 3 to 15 at the top level. Break a big one into sub-todos rather than adding more top-level items, and leave the parent's status off so it follows its children.
+- Split every todo into concrete sub-items (`children`), one per deliverable step, so it's obvious what will get done and how far along it is. "Add sign-in" becomes route and handler, session cookie, tests, docs. Keep about 3 to 15 at the top level, and leave a parent's status off so it follows its children.
+- Every ask goes on the list the moment you hear it: one you're putting off goes in as `pending`, and anything waiting on the person (a decision, access, a review) gets its own todo with `status: blocked` and a `note` saying what you need.
 - Add `uses` for real dependencies only: calls, data a part reads or writes, events it listens to. The map lays parts out by these arrows, so a missing one puts a part in the wrong place and an invented one adds clutter. Use `weight` for how heavily one part leans on another.
 - Clear an agent's `nodes` (or set `status: idle`) when it finishes, so its marker walks back to the waiting area instead of standing on a part it left.
 - Brainstorming: write the structure early, before any code, with `status: idea` and `phase: brainstorming`. Rewrite it freely as the idea changes. When a part splits, give each new part `from: <old id>` and delete the old one; when parts merge, give the result `from: [a, b]`. To break a part down, just add `children`. The map animates each of these from the old boxes, so keep ids stable otherwise.
