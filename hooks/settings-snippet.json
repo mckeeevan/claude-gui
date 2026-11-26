@@ -9,6 +9,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/claude-gui/workview_guard.py",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -26,6 +35,28 @@
     "PostToolUse": [
       {
         "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/claude-gui/claude_gui_hook.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "ArtifactData|Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/claude-gui/workview_guard.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
@@ -55,15 +86,12 @@
             "timeout": 5
           }
         ]
-      }
-    ],
-    "PostToolUseFailure": [
+      },
       {
-        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/claude-gui/claude_gui_hook.py",
+            "command": "python3 ~/.claude/claude-gui/workview_guard.py",
             "timeout": 5
           }
         ]

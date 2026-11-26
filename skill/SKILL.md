@@ -5,6 +5,14 @@ description: Set up and keep current the Claude GUI (Work View), the live D3 pag
 
 # Keeping the Claude GUI state file current
 
+## The rule
+
+The person watches the Work View live. For the whole session, including after a context summary or a long break:
+
+- **Every action shows up as it happens**: each read, edit, command, test run, commit, push, agent start or finish, and message. Never batch, and never plan to "catch up later".
+- **A reply to the person is a step too.** Bring the view up to date before the reply goes out: todos, focus and thinking in `state.yaml`, and in artifact mode a push of `workview/live`.
+- **The guard hook enforces this.** It reminds you when the view falls 2 minutes behind, and blocks ending your turn while you have done work the view hasn't seen. When it fires, update the view, then carry on. Don't argue with it or work around it.
+
 A live page (the Claude GUI viewer) draws what you are working on from two files in the project's `.claude-gui/` folder:
 
 - `state.yaml` is **your picture of the work**. You edit it by hand. It holds the parts that need judgment: the goal, what you're thinking, the app's structure, agents' roles and the todo list.
@@ -19,7 +27,8 @@ Decide at the start of every task, without asking the person, and set it up if i
 1. **Get the latest code**: `git -C ~/claude-gui pull`, or `git clone https://github.com/mckeeevan/claude-gui ~/claude-gui` if it is missing. If the clone is refused in a cloud session, attach the repo `mckeeevan/claude-gui` to the session and clone again.
 2. **Pick the mode.**
    - **Hooks + local page**: Claude runs on the person's own machine and they will open the page there. Run `python3 ~/claude-gui/install.py <project>` (once per project; again to update). Hooks log your actions; serve the page with `python3 .claude/claude-gui/viewer/serve.py .` and give the person `http://localhost:8765`.
-   - **claude.ai artifact**: a cloud session, or the person wants a link they can open anywhere. Run `python3 ~/claude-gui/install.py <project> --artifact` and follow "Running without hooks" below. If the project already has a Work View artifact (check `.claude-gui/artifact-url`, or list artifacts), keep using it; otherwise publish one and save its URL to `.claude-gui/artifact-url`.
+   - **claude.ai artifact**: a cloud session, or the person wants a link they can open anywhere. Run `python3 ~/claude-gui/install.py <project> --artifact` and follow "Running as a claude.ai artifact" below. If the project already has a Work View artifact (check `.claude-gui/artifact-url`, or list artifacts), keep using it; otherwise publish one and save its URL to `.claude-gui/artifact-url`, which switches the guard to artifact mode.
+   - Both modes install the hooks. Claude Code runs project hooks in cloud sessions too, so actions are logged for you; after installing, start a new session or check `/hooks` if they don't fire yet.
    - When unsure, use the artifact: it works everywhere.
 3. **Turn on coverage** if the tests don't already write a report (see "Turning on coverage").
 4. **Give the person the link** once, then keep it current without being asked.
@@ -156,13 +165,13 @@ Set it in the test config, so a plain test run writes a report the hook (or `art
 
 Add the report (`coverage/`, `coverage.json`, `lcov.info`) to `.gitignore`. Whoever runs the tests (this session, a session on the person's machine, CI) reports the coverage.
 
-## Running without hooks (claude.ai artifact or cloud session)
+## Running as a claude.ai artifact
 
-Where no hook runs, nothing logs your actions for you, and the viewer is a published claude.ai artifact rather than `serve.py`. Install with `python3 ~/claude-gui/install.py <project> --artifact`; it prints the publish steps. Then:
+The viewer is a published claude.ai artifact rather than `serve.py`. Install with `python3 ~/claude-gui/install.py <project> --artifact`; it prints the publish steps. The hooks log your actions to `events.jsonl` when they run; where they don't (a surface without Claude Code hooks), log each step yourself with `artifact_state.py log`. Either way, only you can push the view:
 
 - **Publish the viewer once** with the `db` capability `{"db": {"rules": [{"path": "workview", "read": "view", "write": "admin"}]}}` (anyone with the link reads, only editors write). Publish again only when the viewer code changes. **Never republish for a state change**: a new version reloads every open view and loses what the person had open.
-- **Log every step yourself, as it happens**: every read, edit, command, test run, commit, push, agent start or finish, and message. One step, one event, one update; never save them up into a batch. The person is watching live.
-  `python3 .claude/claude-gui/artifact_state.py log edit --target src/a.ts --node api.auth`
+- **Log every step as it happens** (see "The rule"). If the hooks aren't running, write each event yourself: `python3 .claude/claude-gui/artifact_state.py log edit --target src/a.ts --node api.auth`. Check `.claude-gui/events.jsonl` grows as you work to know which case you're in.
+- **Publishing state files directly** (instead of the database) needs `contentType: "text/plain"` for `.yaml` and `.jsonl`; prefer the database, which never reloads the page.
 - **Change state.yaml only through the tool**: `artifact_state.py set '{todos: [{id: t3, status: done}]}'`. It merges by id at any depth, writes valid YAML (quoting included) and stamps `updated`. Don't hand-edit flow maps.
 - **Push each update**: `artifact_state.py live`, then ArtifactData `set` with collection `workview`, doc_id `live`, `file_path` `.claude-gui/live.json`, and `if_version` set to the version your last write returned. The page updates in place.
 - **After every test run**: `artifact_state.py log test --target "npm test" --passed N --failed M`, then `artifact_state.py coverage coverage/coverage-summary.json .`, then `live` and `set`.
