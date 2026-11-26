@@ -9,6 +9,7 @@ import { agentCards } from "./agent-chart.js";
 import { todoList, stackedBar, activityFeed, agentCard, testsPanel } from "./panels.js";
 import { DEMO_SCRIPT } from "./demo.js";
 import { splitters } from "./splitters.js";
+import { minimap, viewportOf, scrollToCenter } from "./minimap.js";
 
 const CFG = {
   state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", heartbeat: "state/heartbeat", poll: 1000,
@@ -186,7 +187,43 @@ async function render() {
     .style("max-height", fitting ? `min(100%, ${layout.height + 26}px)` : null);
   applyHighlight();
   revealFocus(layout, model.focus);
+  updateInset(duration);
 }
+
+// ---- inset map ------------------------------------------------------------
+// Shows the whole map with the part on screen boxed, whenever the map is bigger than its space.
+const inset = minimap().onJump((p) => {
+  const geo = mapGeometry();
+  if (!geo) return;
+  const { dx, dy } = scrollToCenter(p, geo.view, geo.k);
+  const scroller = document.querySelector(".map-scroll");
+  const behavior = reduceMotion ? "auto" : "smooth";
+  // The map box scrolls sideways (and down on a wide screen); on a phone the page itself scrolls down.
+  const canDown = scroller.scrollHeight > scroller.clientHeight + 1;
+  scroller.scrollBy({ left: dx, top: canDown ? dy : 0, behavior });
+  if (!canDown) window.scrollBy({ top: dy, behavior });
+});
+function mapGeometry() {
+  const scroller = document.querySelector(".map-scroll");
+  const svg = scroller?.querySelector("svg.map");
+  const vb = svg?.viewBox?.baseVal;
+  if (!svg || !vb || !vb.width) return null;
+  const m = svg.getBoundingClientRect();
+  const b = scroller.getBoundingClientRect();
+  const visible = { left: Math.max(b.left, 0), top: Math.max(b.top, 0), right: Math.min(b.right, window.innerWidth), bottom: Math.min(b.bottom, window.innerHeight) };
+  return { view: viewportOf(m, visible, [vb.x, vb.y, vb.width, vb.height]), k: m.width / vb.width };
+}
+function updateInset(duration = 0) {
+  if (!layout) return;
+  const geo = mapGeometry();
+  inset.duration(reduceMotion ? 0 : duration);
+  select("#minimap").datum({ layout, view: geo?.view ?? null }).call(inset);
+}
+// One layout read per frame while scrolling, so the box keeps up with the hand.
+let insetFrame = 0;
+const queueInset = () => { if (!insetFrame) insetFrame = requestAnimationFrame(() => { insetFrame = 0; updateInset(0); }); };
+document.querySelector(".map-scroll")?.addEventListener("scroll", queueInset, { passive: true });
+window.addEventListener("scroll", queueInset, { passive: true });
 
 // On a wide screen the map must fit its column, so lay it out both top-down and
 // left-to-right and keep whichever is drawn larger. The current direction is kept
@@ -194,8 +231,9 @@ async function render() {
 let direction = "DOWN";
 const wide = window.matchMedia?.("(min-width: 1100px)");
 async function layoutForSpace(m) {
-  const opts = { elk, collapsed, expanded };
   const box = document.querySelector(".map-scroll");
+  // The box's shape decides whether the done shelf sits beside the map or under it.
+  const opts = { elk, collapsed, expanded, aspect: box && box.clientHeight ? box.clientWidth / box.clientHeight : null };
   if (!wide?.matches || !box || !box.clientHeight) return layoutStructure(m, { ...opts, direction: "DOWN" });
   const [down, right] = await Promise.all([layoutStructure(m, { ...opts, direction: "DOWN" }), layoutStructure(m, { ...opts, direction: "RIGHT" })]);
   const fit = (l) => Math.min(box.clientWidth / (l.width + 12), box.clientHeight / (l.height + 26));
@@ -216,6 +254,7 @@ select("#zoom").on("click", function () {
   const full = !document.body.classList.contains("map-full");
   document.body.classList.toggle("map-full", full);
   select(this).attr("aria-pressed", String(full)).text(full ? "Fit to screen" : "Full size");
+  queueInset();
 });
 let resizeTimer = null;
 window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { panes.refresh(); render(); }, 200); });

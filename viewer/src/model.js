@@ -694,63 +694,130 @@ function subtreeAgents(node, nodeAgents, into = new Set()) {
  * dependency diagram. Uses ELK's layered algorithm, which places dependencies
  * top to bottom and routes edges across nesting levels.
  *
+ * Three things keep a busy plan readable:
+ * - Finished top-level branches nobody is on float off to a "done" shelf,
+ *   beside or under the map (whichever suits `aspect`), as small chips.
+ * - Finished parts inside open groups shrink to one-line chips.
+ * - A group whose children have no arrows between them packs them in a grid
+ *   instead of one long row; arrows to those children land on the group.
+ *
  * model    output of buildModel
  * options  elk (an ELK instance; injected so this stays testable in Node),
  *          collapsed / expanded (Sets of ids the person folded or opened),
- *          charWidth, leafHeight, header (px above a container's children)
- * Returns a Promise of { nodes, edges, width, height }, with absolute x/y.
- * Nodes are ordered parents first, so later nodes draw on top.
+ *          charWidth, leafHeight, chipHeight, header (px above a container's children),
+ *          aspect (width / height of the space the map is drawn in; picks the shelf's side),
+ *          shelf, pack (false turns that behaviour off)
+ * Returns a Promise of { nodes, edges, tokens, shelf, visibleOf, width, height }, with
+ * absolute x/y. Nodes are ordered parents first, so later nodes draw on top.
+ * Agents with no part are not drawn on the map (the Agents panel lists them).
  */
 export async function layoutStructure(model, {
-  elk, collapsed = new Set(), expanded = new Set(), charWidth = 7.4, leafHeight = 52, header = 34, minLeafWidth = 128,
-  token = 26, tokenGap = 6, lane = 34, pen = 64, direction = "DOWN",
+  elk, collapsed = new Set(), expanded = new Set(), charWidth = 7.4, leafHeight = 52, chipHeight = 30, header = 34, minLeafWidth = 128,
+  token = 26, tokenGap = 6, lane = 34, direction = "DOWN", aspect = null, shelf: useShelf = true, pack = true,
 } = {}) {
-  if (!model.structure.length) return { nodes: [], edges: [], tokens: [], bullpen: null, visibleOf: new Map(), width: 0, height: 0 };
+  if (!model.structure.length) return { nodes: [], edges: [], tokens: [], shelf: null, bullpen: null, visibleOf: new Map(), width: 0, height: 0 };
   if (!elk) throw new Error("layoutStructure needs an elk instance");
   const foldOpts = { collapsed, expanded, focusPath: model.focusPath };
+  const gap = 10; // between grid cells and shelf chips
 
-  // Which visible box stands in for each part: itself, or its nearest folded ancestor.
-  const visibleOf = new Map();
   const workers = model.agents.filter((a) => !a.isPerson && a.at);
   const inSubtree = (root, id) => { for (let p = id; p; p = model.parentOf.get(p)) if (p === root.id) return true; return false; };
   const standing = (n, folded) => workers.filter((a) => (folded ? inSubtree(n, a.at) : a.at === n.id)).length;
+  const allDone = (n) => { const s = leafStats(n); return s.done === s.total; };
+
+  // A finished top-level branch with nobody on it and nothing failing is history:
+  // it waits on the shelf until the person opens it or work comes back to it.
+  const shelvable = (n) => useShelf && allDone(n) && !model.focusPath.includes(n.id) && !expanded.has(n.id)
+    && !standing(n, true) && !failingIn(n, model.tests?.byNode, true);
+  const shelvedTop = model.structure.filter(shelvable);
+  // If everything is finished there is nothing to set it beside, so it all stays in the map.
+  const shelved = new Set(shelvedTop.length < model.structure.length ? shelvedTop.map((n) => n.id) : []);
+
+  // Pass 1: what is drawn, and how. visibleOf maps every part to the box that stands in for it.
+  const visibleOf = new Map();
   const meta = new Map();
-  const toElk = (n, depth, parentId) => {
-    const folded = isFolded(n, foldOpts);
+  const sizeOf = (n, folded, compact) => {
+    const here = standing(n, folded);
+    const laneWidth = here * token + Math.max(0, here - 1) * tokenGap + 24;
+    if (compact) return { width: Math.max(88, n.name.length * charWidth + 26), height: chipHeight };
+    return { width: Math.max(minLeafWidth, n.name.length * charWidth + 32, here ? laneWidth : 0), height: leafHeight + (here ? lane : 0) };
+  };
+  const visit = (n, depth, parentId, onShelf) => {
+    const folded = (onShelf && n.children.length > 0) || isFolded(n, foldOpts);
     const container = n.children.length > 0 && !folded;
-    meta.set(n.id, { n, depth, parentId, folded, container });
-    const mark = (m) => { visibleOf.set(m.id, n.id); m.children.forEach(mark); };
-    if (!container) {
-      mark(n);
-      // A part with agents standing on it grows a lane along its bottom for their tokens.
-      const here = standing(n, folded);
-      const laneWidth = here * token + Math.max(0, here - 1) * tokenGap + 24;
-      return {
-        id: n.id,
-        width: Math.max(minLeafWidth, n.name.length * charWidth + 32, here ? laneWidth : 0),
-        height: leafHeight + (here ? lane : 0),
-      };
+    // A finished part with nobody on it shrinks to a chip; the focus and failures keep full size.
+    const compact = !container && allDone(n) && n.id !== model.focus && !standing(n, folded) && !failingIn(n, model.tests?.byNode, folded);
+    const m = { n, depth, parentId, folded, container, compact, shelved: onShelf, packed: false, ...(container ? {} : sizeOf(n, folded, compact)) };
+    meta.set(n.id, m);
+    if (container) { visibleOf.set(n.id, n.id); n.children.forEach((c) => visit(c, depth + 1, n.id, false)); }
+    else { const mark = (x) => { visibleOf.set(x.id, n.id); x.children.forEach(mark); }; mark(n); }
+  };
+  model.structure.forEach((n) => visit(n, 0, null, shelved.has(n.id)));
+
+  const ancestorsOf = (id) => { const out = []; for (let p = model.parentOf.get(id); p; p = model.parentOf.get(p)) out.push(p); return out; };
+  const related = (a, b) => a === b || ancestorsOf(a).includes(b) || ancestorsOf(b).includes(a);
+  const visibleEdges = [];
+  for (const d of model.deps) {
+    const a = visibleOf.get(d.from);
+    const b = visibleOf.get(d.to);
+    // Folding can merge both ends into one box, or put one inside the other; neither can be drawn as an arrow.
+    if (!a || !b || related(a, b) || meta.get(a).shelved || meta.get(b).shelved) continue;
+    visibleEdges.push({ a, b, d });
+  }
+
+  // Pass 2: groups whose children are all single boxes with no arrows between them
+  // get packed into a grid. ELK sees the group as one fixed-size box.
+  const packedIn = new Map(); // child id -> packed group id
+  if (pack) {
+    for (const m of meta.values()) {
+      if (!m.container || m.n.children.length < 3) continue;
+      const kids = m.n.children.map((c) => meta.get(c.id));
+      if (kids.some((k) => k.container)) continue;
+      const ids = new Set(m.n.children.map((c) => c.id));
+      if (visibleEdges.some((e) => ids.has(e.a) && ids.has(e.b))) continue;
+      m.packed = true;
+      for (const id of ids) packedIn.set(id, m.n.id);
+      const cw = Math.max(...kids.map((k) => k.width));
+      // Roughly square blocks: wide cells mean fewer columns than rows.
+      const ch = Math.max(...kids.map((k) => k.height));
+      const cols = Math.max(1, Math.min(kids.length, Math.round(Math.sqrt(kids.length * 1.4 * ch / cw)) || 1));
+      const rows = [];
+      kids.forEach((k, i) => { (rows[Math.floor(i / cols)] ||= []).push(k); });
+      let y = header;
+      for (const row of rows) {
+        const rh = Math.max(...row.map((k) => k.height));
+        row.forEach((k, i) => { k.gx = 14 + i * (cw + gap); k.gy = y; k.width = cw; });
+        y += rh + gap;
+      }
+      m.width = 28 + cols * cw + (cols - 1) * gap;
+      m.height = Math.max(header + 20, y - gap + 14);
+      m.headerName = m.n.name.length * charWidth + 120; // room for the name and roll-up in the header
+      m.width = Math.max(m.width, m.headerName);
     }
-    visibleOf.set(n.id, n.id);
+  }
+  // An arrow to a packed child is drawn to its group.
+  const lift = (id) => packedIn.get(id) ?? id;
+
+  const elkNodes = new Map();
+  const toElk = (n) => {
+    const m = meta.get(n.id);
+    if (!m.container || m.packed) return { id: n.id, width: m.width, height: m.height };
     const elkNode = {
       id: n.id,
       layoutOptions: { "elk.padding": `[top=${header},left=14,bottom=14,right=14]` },
-      children: n.children.map((c) => toElk(c, depth + 1, n.id)),
+      children: n.children.map(toElk),
       edges: [],
     };
     elkNodes.set(n.id, elkNode);
     return elkNode;
   };
-  const elkNodes = new Map();
-  const children = model.structure.map((n) => toElk(n, 0, null));
+  const children = model.structure.filter((n) => !shelved.has(n.id)).map(toElk);
 
-  const ancestorsOf = (id) => { const out = []; for (let p = model.parentOf.get(id); p; p = model.parentOf.get(p)) out.push(p); return out; };
   const edgeMap = new Map();
-  for (const d of model.deps) {
-    const a = visibleOf.get(d.from);
-    const b = visibleOf.get(d.to);
-    // Folding can merge both ends into one box, or put one inside the other; neither can be drawn as an arrow.
-    if (!a || !b || a === b || ancestorsOf(a).includes(b) || ancestorsOf(b).includes(a)) continue;
+  for (const { a: a0, b: b0, d } of visibleEdges) {
+    const a = lift(a0);
+    const b = lift(b0);
+    if (related(a, b)) continue;
     const key = `${a}>${b}`;
     const e = edgeMap.get(key) || { id: key, source: a, target: b, weight: 0, count: 0, kinds: new Set() };
     e.weight += d.weight; e.count++; e.kinds.add(d.kind);
@@ -788,33 +855,84 @@ export async function layoutStructure(model, {
   const hotIds = new Set();
   const nodes = [];
   const routed = [];
+  const emit = (m, x, y, width, height) => {
+    const n = m.n;
+    const heat = heatOf(n, m.folded || m.container);
+    const active = n.status === "active" || (m.container || m.folded ? subtreeHas(n, "active") : false);
+    const hot = active || heat > 0.15;
+    if (hot) hotIds.add(n.id);
+    nodes.push({
+      id: n.id, name: n.name, status: n.status, note: n.note, paths: n.paths, from: n.from,
+      failing: failingIn(n, model.tests?.byNode, m.folded || m.container),
+      coverage: model.coverage?.byNode.get(n.id) ?? null,
+      x, y, width, height, depth: m.depth, parentId: m.parentId,
+      container: m.container, folded: m.folded, hasChildren: n.children.length > 0,
+      compact: m.compact, shelved: m.shelved, packed: m.packed,
+      rollup: n.children.length ? leafStats(n) : null,
+      heat, hot, containsActive: active,
+      agents: [...(m.container ? [] : m.folded ? subtreeAgents(n, model.nodeAgents) : model.nodeAgents.get(n.id) || [])],
+      focus: n.id === model.focus,
+      onFocusPath: model.focusPath.includes(n.id),
+    });
+  };
   const walk = (g, ox, oy) => {
     for (const ge of g.edges || []) routed.push({ ge, ox, oy });
     for (const c of g.children || []) {
       const m = meta.get(c.id);
-      const n = m.n;
       const x = ox + c.x;
       const y = oy + c.y;
-      const heat = heatOf(n, m.folded || m.container);
-      const active = n.status === "active" || (m.container || m.folded ? subtreeHas(n, "active") : false);
-      const hot = active || heat > 0.15;
-      if (hot) hotIds.add(n.id);
-      nodes.push({
-        id: n.id, name: n.name, status: n.status, note: n.note, paths: n.paths, from: n.from,
-        failing: failingIn(n, model.tests?.byNode, m.folded || m.container),
-        coverage: model.coverage?.byNode.get(n.id) ?? null,
-        x, y, width: c.width, height: c.height, depth: m.depth, parentId: m.parentId,
-        container: m.container, folded: m.folded, hasChildren: n.children.length > 0,
-        rollup: n.children.length ? leafStats(n) : null,
-        heat, hot, containsActive: active,
-        agents: [...(m.container ? [] : m.folded ? subtreeAgents(n, model.nodeAgents) : model.nodeAgents.get(n.id) || [])],
-        focus: n.id === model.focus,
-        onFocusPath: model.focusPath.includes(n.id),
-      });
+      emit(m, x, y, c.width, c.height);
+      if (m.packed) for (const k of m.n.children) { const km = meta.get(k.id); emit(km, x + km.gx, y + km.gy, km.width, km.height); }
       walk(c, x, y);
     }
   };
   walk(graph, 0, 0);
+
+  // The shelf: finished branches as chips in rows, beside the map or under it,
+  // whichever leaves the map drawn larger in the space it has.
+  let shelf = null;
+  let width = graph.width;
+  let height = graph.height;
+  if (shelved.size) {
+    const chips = model.structure.filter((n) => shelved.has(n.id)).map((n) => meta.get(n.id));
+    const pad = 12;
+    const head = 26;
+    const flow = (maxW) => {
+      let x = 0; let y = 0; let w = 0;
+      const at = chips.map((c) => {
+        if (x > 0 && x + c.width > maxW) { x = 0; y += chipHeight + gap; }
+        const p = { x, y };
+        x += c.width + gap; w = Math.max(w, x - gap);
+        return p;
+      });
+      return { at, w, h: y + chipHeight };
+    };
+    const widest = Math.max(...chips.map((c) => c.width));
+    // Under: rows as wide as the map. Beside: a column about as tall as the map.
+    const under = flow(Math.max(graph.width - 16 - pad * 2, widest));
+    let side = null;
+    for (let w = widest; ; w += widest + gap) {
+      side = flow(w);
+      if (side.h + head + pad <= Math.max(graph.height - 16, chipHeight + head + pad) || side.w >= under.w) break;
+    }
+    const box = (f) => ({ width: f.w + pad * 2, height: f.h + head + pad });
+    const fit = (W, H) => (aspect ? Math.min(aspect / W, 1 / H) : (W === graph.width ? 1 : 0));
+    const ub = box(under);
+    const sb = box(side);
+    const uW = Math.max(graph.width, ub.width + 16);
+    const uH = graph.height + 8 + ub.height + 8;
+    const sW = graph.width + 8 + sb.width + 8;
+    const sH = Math.max(graph.height, sb.height + 16);
+    const beside = aspect != null && fit(sW, sH) > fit(uW, uH) * 1.05;
+    const f = beside ? side : under;
+    const b = beside ? sb : ub;
+    shelf = beside
+      ? { x: graph.width + 8, y: 8, width: b.width, height: b.height, count: chips.length, side: "right" }
+      : { x: 8, y: graph.height + 8, width: Math.max(b.width, graph.width - 16), height: b.height, count: chips.length, side: "below" };
+    chips.forEach((c, i) => emit(c, shelf.x + pad + f.at[i].x, shelf.y + head + f.at[i].y, c.width, chipHeight));
+    width = beside ? sW : uW;
+    height = beside ? sH : uH;
+  }
 
   const edges = routed.sort((a, b) => (a.ge.id < b.ge.id ? -1 : 1)).map(({ ge, ox, oy }) => {
     const e = edgeMap.get(ge.id);
@@ -832,30 +950,24 @@ export async function layoutStructure(model, {
     };
   });
 
-  // Tokens: one per agent. Working agents stand in the lane of their part (or the
-  // header of an open group); everyone else waits in the bullpen under the map.
+  // Tokens: one per working agent, standing in the lane of its part (or the
+  // header of an open group). Agents with no part live in the Agents panel only.
   const byBox = new Map(nodes.map((n) => [n.id, n]));
   const tokens = [];
   const perBox = new Map();
   for (const a of model.agents) {
     if (a.isPerson) continue;
     const box = a.at ? byBox.get(visibleOf.get(a.at)) : null;
-    if (box) {
-      const i = perBox.get(box.id) ?? 0;
-      perBox.set(box.id, i + 1);
-      const r = token / 2;
-      tokens.push(box.container
-        ? { id: a.id, x: box.x + box.width - 60 - r - i * (token + tokenGap), y: box.y + header / 2, at: box.id, parked: false }
-        : { id: a.id, x: box.x + 12 + r + i * (token + tokenGap), y: box.y + leafHeight + lane / 2 - 4, at: box.id, parked: false });
-    } else tokens.push({ id: a.id, at: null, parked: true });
+    if (!box) continue;
+    const i = perBox.get(box.id) ?? 0;
+    perBox.set(box.id, i + 1);
+    const r = token / 2;
+    tokens.push(box.container
+      ? { id: a.id, x: box.x + box.width - 60 - r - i * (token + tokenGap), y: box.y + header / 2, at: box.id, parked: false }
+      : { id: a.id, x: box.x + 12 + r + i * (token + tokenGap), y: box.y + leafHeight + lane / 2 - 4, at: box.id, parked: false });
   }
-  const parked = tokens.filter((t) => t.parked);
-  const penWidth = parked.length * (token + 18) + 90;
-  const width = Math.max(graph.width, penWidth);
-  const bullpen = { x: 8, y: graph.height + 24, width: width - 16, height: pen, count: parked.length };
-  parked.forEach((t, i) => { t.x = bullpen.x + 70 + token / 2 + i * (token + 18); t.y = bullpen.y + pen / 2; });
 
-  return { nodes, edges, tokens, bullpen, visibleOf, width, height: bullpen.y + pen };
+  return { nodes, edges, tokens, shelf, bullpen: null, visibleOf, width, height };
 }
 
 /**

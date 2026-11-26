@@ -112,11 +112,13 @@ export function structureMap() {
           .call((p) => p.append("rect").attr("width", 6).attr("height", 6).attr("fill", "#FFFFFF"))
           .append("line").attr("y1", 0).attr("y2", 6).attr("stroke", "#DCDBD6").attr("stroke-width", 2.5);
         s.append("g").attr("class", "containers");
+        // The done shelf sits under the boxes it holds, starting as a point so it grows in.
+        const shelf = s.append("g").attr("class", "shelf empty").attr("transform", "translate(0,0) scale(0)");
+        shelf.append("rect").attr("class", "shelf-bg").attr("width", 0).attr("height", 0);
+        shelf.append("text").attr("class", "shelf-title").attr("x", 12).attr("y", 17).text("Done");
+        shelf.append("text").attr("class", "shelf-count").attr("y", 17).attr("text-anchor", "end");
         s.append("g").attr("class", "deps");
         s.append("g").attr("class", "leaves");
-        const pen = s.append("g").attr("class", "bullpen");
-        pen.append("rect").attr("class", "pen");
-        pen.append("text").attr("class", "pen-title").attr("x", 14).attr("y", 36).text("Idle");
         s.append("g").attr("class", "tokens");
         return s;
       });
@@ -228,7 +230,7 @@ export function structureMap() {
           (exit) => exitTo(exit, next, "rect.box"),
         );
       leafSel
-        .attr("class", (d) => `part leaf st-${d.status}${d.folded ? " folded" : ""}${d.focus ? " focus" : ""}${d.failing ? " failing" : ""} cov-${d.coverage?.band ?? "untested"}${lens === "tests" && darkFill(d.coverage?.pct) ? " on-dark" : ""}`)
+        .attr("class", (d) => `part leaf st-${d.status}${d.compact ? " compact" : ""}${d.shelved ? " shelved" : ""}${d.folded ? " folded" : ""}${d.focus ? " focus" : ""}${d.failing ? " failing" : ""} cov-${d.coverage?.band ?? "untested"}${lens === "tests" && darkFill(d.coverage?.pct) ? " on-dark" : ""}`)
         .attr("tabindex", (d) => (d.hasChildren ? 0 : -1))
         .attr("role", (d) => (d.hasChildren ? "button" : null))
         .attr("aria-expanded", (d) => (d.hasChildren ? "false" : null))
@@ -241,8 +243,9 @@ export function structureMap() {
       leafSel.select("rect.heat").call((s) => tr(s)
         .attr("y", (d) => d.height - 3)
         .attr("width", (d) => (d.heat > 0.02 ? Math.max(6, d.width * Math.min(1, d.heat)) : 0)));
-      leafSel.select("text.name").text((d) => d.name);
-      leafSel.select("text.sub").text((d) => subLine(d));
+      // A chip is one line: the name slides to the middle while the status line fades out under it.
+      leafSel.select("text.name").text((d) => d.name).call((s) => tr(s).attr("y", (d) => (d.compact ? d.height / 2 + 4.5 : 22)));
+      leafSel.select("text.sub").text((d) => subLine(d)).call((s) => tr(s).attr("y", (d) => (d.compact ? d.height / 2 + 4.5 : 39)).attr("opacity", (d) => (d.compact ? 0 : 1)));
       leafSel.select("g.now").call((s) => tr(s).attr("opacity", (d) => (d.focus ? 1 : 0)))
         .select("rect.ring").attr("width", (d) => d.width + 10).attr("height", (d) => d.height + 10);
       // The badge grows from its corner, so a new failure is noticed without a flash.
@@ -251,12 +254,15 @@ export function structureMap() {
         .select("text").text((d) => (d.failing ? `✕${d.failing > 1 ? d.failing : ""}` : ""));
       leafSel.select("title").text((d) => titleOf(d));
 
-      // ---- bullpen and agent tokens -------------------------------------
-      const pen = layout.bullpen;
-      svg.select("g.bullpen").attr("transform", pen ? `translate(${pen.x},${pen.y})` : null).attr("hidden", pen ? null : "");
-      if (pen) {
-        svg.select("rect.pen").attr("width", pen.width).attr("height", pen.height);
-      }
+      // ---- done shelf and agent tokens ----------------------------------
+      // The shelf glides to its side and resizes; with nothing finished it shrinks into its corner.
+      const sh = layout.shelf;
+      const shelfG = svg.select("g.shelf");
+      if (sh && shelfG.classed("empty")) shelfG.attr("transform", `translate(${sh.x},${sh.y}) scale(0)`); // grows in where it will sit
+      shelfG.classed("empty", !sh);
+      if (sh) shelfG.select("text.shelf-count").text(sh.count).call((s) => tr(s).attr("x", sh.width - 12));
+      tr(shelfG).attr("transform", sh ? `translate(${sh.x},${sh.y}) scale(1)` : `${(shelfG.attr("transform") || "").replace(/scale\([^)]*\)/, "")} scale(0)`);
+      if (sh) tr(shelfG.select("rect.shelf-bg")).attr("width", sh.width).attr("height", sh.height);
       svg.select("g.tokens").selectAll("g.token:not(.is-exiting)")
         .data(layout.tokens, (t) => t.id) // keyed by agent, so a token glides from part to part instead of being redrawn
         .join(

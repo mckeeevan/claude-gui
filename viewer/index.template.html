@@ -96,6 +96,20 @@ h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -
 /* structure map */
 .map-scroll { overflow-x: auto; padding-bottom: 6px }
 #map svg { display: block; margin: 0 auto; overflow: visible; max-width: 100%; height: auto }
+/* The inset map sits in the corner of the map area and grows out of that corner when the map stops fitting. */
+.map-stage { position: relative }
+.minimap { position: absolute; right: 10px; bottom: 14px; z-index: 3; padding: 5px; background: var(--paper); border: 1px solid var(--rule);
+  transform: scale(0); transform-origin: 100% 100%; opacity: 0; pointer-events: none; transition: transform .45s cubic-bezier(.65,0,.35,1), opacity .45s }
+.minimap.on { transform: scale(1); opacity: 1; pointer-events: auto }
+.minimap svg { display: block; cursor: pointer }
+.minimap .group { fill: none; stroke: var(--rule); stroke-width: 1.5; vector-effect: non-scaling-stroke }
+.minimap .leaf { fill: var(--paper-alt); stroke: var(--context); stroke-width: .75; vector-effect: non-scaling-stroke }
+.minimap .leaf.st-active { fill: var(--orange); stroke: var(--orange) }
+.minimap .leaf.st-done { fill: var(--done); stroke: var(--done) }
+.minimap .leaf.st-blocked { stroke: var(--red) }
+.minimap .shelf { fill: var(--rule-soft) }
+.minimap .view { fill: var(--navy); fill-opacity: .08; stroke: var(--navy); stroke-width: 1.5; vector-effect: non-scaling-stroke }
+@media (prefers-reduced-motion: reduce) { .minimap { transition: none } }
 /* Shrinking the whole map to a phone would take its text under 10px, so narrow screens scroll it instead. */
 @media (max-width: 860px) { #map svg { max-width: none } .map-scroll { margin-inline: -4px } }
 .part { cursor: default; transition: opacity .25s }
@@ -146,9 +160,13 @@ h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -
 .arrow.cold path { fill: var(--context) }
 
 /* agents on the map */
-.bullpen .pen { fill: var(--rule-soft) }
-.bullpen .pen-title { font: 700 11px var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--grey) }
-.bullpen .pen-note { font: 400 11px var(--f-sans); fill: var(--grey) }
+.shelf .shelf-bg { fill: var(--rule-soft); rx: 3 }
+.shelf .shelf-title { font: 700 10.5px var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--grey) }
+.shelf .shelf-count { font: 500 10.5px var(--f-mono); fill: var(--grey); font-variant-numeric: tabular-nums }
+.leaf.compact .name { font-size: 12px; font-weight: 500 }
+.leaf.compact.st-done .box { fill: var(--done); stroke: none }
+.leaf.shelved.compact .box { fill: var(--paper-alt); stroke: var(--rule); stroke-width: 1; stroke-dasharray: none }
+.leaf.shelved .name { fill: var(--ink-soft) }
 .token { cursor: pointer; transition: opacity .25s }
 .token .disc { fill: var(--ink); stroke: var(--paper-alt); stroke-width: 2 }
 .token .ini { font: 700 10.5px var(--f-sans); fill: var(--paper-alt); text-anchor: middle; pointer-events: none }
@@ -382,6 +400,7 @@ h1 { font-size: clamp(22px, 2.1vw, 30px); max-width: 48ch }
   .col { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 4px }
   /* The map column is a flex stack whose map area takes all the height left. */
   .col-map { display: flex; flex-direction: column; overflow: hidden; gap: 0 }
+  .col-map .map-stage { flex: 1; min-height: 0; display: flex; flex-direction: column }
   .col-map .map-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 }
   #map { height: 100%; display: flex; align-items: flex-start; justify-content: center }
   #map svg { width: 100%; height: 100%; max-width: 100%; max-height: 100% }
@@ -648,7 +667,7 @@ body:not(.lens-tests) .key-tests, body.lens-tests .key-work, body:not(.lens-test
       </div>
       <div class="bar parts-bar" id="parts-bar"></div>
       <div class="bar parts-bar cov-bar" id="cov-bar"></div>
-      <div class="map-scroll"><div id="map"></div></div>
+      <div class="map-stage"><div class="map-scroll"><div id="map"></div></div><div class="minimap" id="minimap" title="Whole map. Click to jump there."></div></div>
     </section>
     <div class="split split-col" data-col="right" aria-label="Resize right column"></div>
 
