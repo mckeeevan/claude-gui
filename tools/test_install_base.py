@@ -55,6 +55,9 @@ class Base(unittest.TestCase):
         md = (self.p / "CLAUDE.md").read_text()
         self.assertTrue((self.p / ".claude/agents/task-planner.md").exists())
         self.assertTrue((self.p / ".claude/rules/testing.md").exists())
+        for f in (".claude/agents/tester.md", ".claude/agents/reviewer.md", ".claude/rules/using-agents.md"):
+            self.assertTrue((self.p / f).exists(), f)
+        self.assertIn(".claude/rules/using-agents.md", md)
         (self.p / "CLAUDE.md").write_text(md.replace("(none found yet", "(edited"))
         install.install_base(self.p)
         md2 = (self.p / "CLAUDE.md").read_text()

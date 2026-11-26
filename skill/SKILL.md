@@ -186,6 +186,6 @@ The viewer is a published claude.ai artifact rather than `serve.py`. Install wit
 - **Push each update**: `artifact_state.py live`, then ArtifactData `set` with collection `workview`, doc_id `live`, `file_path` `.claude-gui/live.json`, and `if_version` set to the version your last write returned. The page updates in place.
 - **After every test run**: `artifact_state.py log test --target "npm test" --passed N --failed M`, then `artifact_state.py coverage coverage/coverage-summary.json .`, then `live` and `set`.
 - **Several writers** (you plus helper or remote sessions) share the one document: always pin writes with `if_version`, and say in each helper's brief whether it writes its own events or reports to you and you write them.
-- **Agent ids** should be what the person sees (`reviewer`, `mac` for a session on their machine). Clear an agent's `nodes` when it finishes.
+- **Agent ids** should be what the person sees (`tester`, `reviewer`, `mac` for a session on their machine). The hooks log each agent's `spawn` and `done`; log them yourself only when the hooks aren't running. Give its to-dos `owner: <id>`, and clear its `nodes` when it finishes. When the Work View shows only you for a whole PR, the tester and reviewer steps were skipped.
 - **Keep a copy of `.claude-gui/`** where the person can open it (the project's shared files, or the repo), since a cloud scratchpad is wiped.
 - **The page may be shared by link**: no secrets, tokens or private data in state, events or paths.
