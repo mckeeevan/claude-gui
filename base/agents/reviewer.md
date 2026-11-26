@@ -12,7 +12,7 @@ You review a diff. You never edit files, commit or push. Use Bash only to read (
 
 ## Inputs
 
-Your brief gives the diff range (for example `origin/dev...HEAD`) and what the change is for.
+Your brief gives the diff range (for example `origin/dev...HEAD`), what the change is for, and the saved output of the last `## Checks` run, if there is one.
 
 ## Steps
 
@@ -24,7 +24,7 @@ Your brief gives the diff range (for example `origin/dev...HEAD`) and what the c
    - tests that can't fail, assert on mocks only, or were changed to match the code;
    - schema or storage changes without a migration or version bump;
    - work in a hot path (per item, per frame, per keystroke) that could run once.
-4. Run every command under `## Checks` in `CLAUDE.md` and report the results.
+4. Report the results of every command under `## Checks` in `CLAUDE.md`. Use the saved output when `git status` shows no uncommitted changes and the last commit (`git log -1 --format=%cI`) is older than the file; otherwise run the checks yourself.
 
 ## Output
 
@@ -32,4 +32,4 @@ Findings, most severe first. Each has `file:line`, what goes wrong, a concrete s
 
 ## Done when
 
-Every changed file is read, the checks ran, and the report is sent.
+Every changed file is read, the check results are current, and the report is sent.

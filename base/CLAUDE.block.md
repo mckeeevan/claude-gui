@@ -5,7 +5,7 @@ This section is kept up to date by claude-gui's `install.py`; edit outside the m
 **Always**
 - `.claude/rules/coding.md`: change as little as the task needs, readable code, edge cases, no secrets.
 - `.claude/rules/testing.md`: tests that can fail, and the test-first cycle for new code.
-- `.claude/rules/using-agents.md`: the `tester` writes the red tests and bug repros, and the `reviewer` checks every branch before it is pushed.
+- `.claude/rules/using-agents.md`: the `tester` writes the red tests and bug repros, and the `reviewer` checks every branch with code before it is pushed.
 - Keep the Work View current (the `claude-gui-state` skill): `.claude-gui/state.yaml`, or `$WORKVIEW_DIR`.
 - Keep replies short: the result, the link, and anything the person needs to do.
 - Before each tool call, say in one short line what you are about to do and why.

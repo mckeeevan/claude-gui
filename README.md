@@ -81,7 +81,7 @@ The event hook also talks back to Claude: after an edit to `state.yaml` it flags
 `install.py` also gives each project a way of working (skip it with `--no-base`):
 
 - `.claude/agents/task-researcher.md` and `task-planner.md`: research before planning, plans in phases that can each be committed on their own, and an `/implement-<task>` command per plan. Planning files go in `.planning/`.
-- `.claude/agents/tester.md` and `reviewer.md`: the tester writes red tests and bug repros from a spec; the reviewer checks every branch before it is pushed.
+- `.claude/agents/tester.md` and `reviewer.md`: the tester writes red tests and bug repros from a spec; the reviewer checks every branch with code before it is pushed.
 - `.claude/rules/`: `coding.md`, `testing.md` (including the test-first cycle), `implementing-plans.md`, `prompts-and-agents.md` and `using-agents.md` (which agent runs at which step of a change, and when to skip one).
 - `.claude/commands/new-project.md`: `/new-project <what it's for>` sets up an empty project: it picks the stack, then (after your OK on the plan and outline) adds tests, coverage, lint, type checks, CI, the checks list and the project notes.
 - A "How to work here" section in `CLAUDE.md` between `<!-- claude-gui:start -->` markers, saying when each rule applies, plus a `## Checks` list of the project's test and build commands (detected once, filled in later if the project started empty, then the project's to edit) and a `## Project` section for the stack and layout.

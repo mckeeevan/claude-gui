@@ -21,7 +21,7 @@ Used by the `/implement-*` commands that task-planner writes, and whenever the p
 ## Phase gate and cadence
 
 - A phase is done only when every check under `## Checks` in `CLAUDE.md` passes: tests, type checks, builds, and the integration or e2e suites if the phase touched them. Capture the full output of long suites to a file (`cmd 2>&1 | tee output.txt`) and read it, rather than trusting a truncated tail.
-- Before the branch's first push, the `reviewer` reviews it (`.claude/rules/using-agents.md`); fix every finding it marks as a bug, rerun the checks, then push.
+- Before the branch's first push, the `reviewer` reviews it (`.claude/rules/using-agents.md`), given the saved check output; fix every finding it marks as a bug, rerun the checks, then push.
 - Then commit the phase to the work branch, never to the main branch:
 
   ```
