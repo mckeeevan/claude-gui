@@ -39,6 +39,49 @@ export function toMs(t) {
 }
 
 /**
+ * Takes new raw texts for the three inputs (state.yaml, events.jsonl,
+ * coverage.json) and returns what the page should hold next. A field that is
+ * not a string (missing from a database document, a 404) leaves that input as
+ * it was. A state or coverage text that does not parse keeps the last good
+ * value, because Claude may be halfway through writing it.
+ *
+ * prev   { state, events, coverage, texts: { state, events, coverage } }
+ * texts  { state, events, coverage }, each a string or absent
+ * parse  YAML parser (js-yaml's load), passed in to keep this module free of it
+ * Returns { ...next, changed, error } where error is a one-line message or null.
+ */
+export function applyTexts(prev, texts = {}, parse) {
+  const next = { state: prev.state ?? null, events: prev.events ?? [], coverage: prev.coverage ?? null, texts: { ...(prev.texts ?? {}) } };
+  let changed = false;
+  let error = null;
+  const { state: st, events: ev, coverage: cov } = texts ?? {};
+  if (typeof st === "string" && st !== next.texts.state) {
+    next.texts.state = st;
+    try {
+      const parsed = parse(st);
+      if (!parsed || typeof parsed !== "object") throw new Error("the file is empty");
+      next.state = parsed;
+      changed = true;
+    } catch (err) {
+      error = `state.yaml did not parse, so the last good version is shown. ${String(err?.message || err).split("\n")[0]}`;
+    }
+  }
+  if (typeof ev === "string" && ev !== next.texts.events) {
+    next.texts.events = ev;
+    next.events = parseEvents(ev);
+    changed = true;
+  }
+  if (typeof cov === "string" && cov !== next.texts.coverage) {
+    try {
+      next.coverage = cov.trim() ? JSON.parse(cov) : null;
+      next.texts.coverage = cov;
+      changed = true;
+    } catch { /* a half-written report: keep the last good one and try again next time */ }
+  }
+  return { ...next, changed, error };
+}
+
+/**
  * Parses the JSON Lines event log. Blank and broken lines are skipped, because
  * the last line can be half-written while a hook is appending to it.
  * Returns new objects with `_i` (position) and `_t` (epoch ms or null).

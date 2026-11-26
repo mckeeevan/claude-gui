@@ -2,14 +2,14 @@
 // This is the only module that touches `document`, `window` or the clock.
 import { select } from "d3";
 import { load as parseYaml } from "js-yaml";
-import { buildModel, parseEvents, layoutStructure, relations, formatAgo, summarize, flattenTodos, agentCardsData, COVERAGE_BANDS, COVERAGE_LABEL } from "./model.js";
+import { buildModel, parseEvents, applyTexts, layoutStructure, relations, formatAgo, summarize, flattenTodos, agentCardsData, COVERAGE_BANDS, COVERAGE_LABEL } from "./model.js";
 import { capture, play } from "./flip.js";
 import { structureMap, coverageColor } from "./structure-chart.js";
 import { agentCards } from "./agent-chart.js";
 import { todoList, stackedBar, activityFeed, agentCard, testsPanel } from "./panels.js";
 import { DEMO_SCRIPT } from "./demo.js";
 
-const CFG = { state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", poll: 1000, ...(window.CLAUDE_GUI || {}) };
+const CFG = { state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", poll: 1000, dbDoc: "workview/live", ...(window.CLAUDE_GUI || {}) };
 const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 const elk = window.ELK ? new window.ELK() : null;
 
@@ -266,35 +266,25 @@ async function fetchText(url) {
   return r.text();
 }
 
+let texts = {}; // the raw texts last applied, so unchanged inputs are not parsed again
+function take(raw) {
+  const next = applyTexts({ state, events, coverage, texts }, raw, parseYaml);
+  ({ state, events, coverage, texts } = next);
+  if (next.error) showError(next.error);
+  else if (next.changed) showError("");
+  return next.changed;
+}
+
+let dbLive = false; // set once the artifact database serves the state; file polling then stops
 async function poll() {
+  if (dbLive) return;
   let changed = false;
   try {
-    const text = await fetchText(CFG.state);
-    if (text !== lastStateText) {
-      lastStateText = text;
-      try {
-        const parsed = parseYaml(text);
-        if (!parsed || typeof parsed !== "object") throw new Error("the file is empty");
-        state = parsed;
-        showError("");
-        changed = true;
-      } catch (err) {
-        // Claude may be halfway through an edit; keep showing the last version that parsed.
-        showError(`state.yaml did not parse, so the last good version is shown. ${String(err.message || err).split("\n")[0]}`);
-      }
-    }
-    try {
-      const text = await fetchText(CFG.events);
-      if (text !== lastEventsText) { lastEventsText = text; events = parseEvents(text); changed = true; }
-    } catch {
-      if (events.length) { events = []; changed = true; }
-    }
-    try {
-      const text = await fetchText(CFG.coverage);
-      if (text !== lastCoverageText) { lastCoverageText = text; coverage = JSON.parse(text); changed = true; }
-    } catch {
-      // No report yet (404) or one being rewritten; keep the last good one.
-    }
+    const raw = { state: await fetchText(CFG.state) };
+    // Events and coverage are optional files: a missing log is empty, a missing report keeps the last one.
+    raw.events = await fetchText(CFG.events).catch(() => "");
+    raw.coverage = await fetchText(CFG.coverage).catch(() => undefined);
+    changed = take(raw);
     if (mode !== "live") { mode = "live"; firstRender = true; }
     setConn("live", "Live");
   } catch {
@@ -303,6 +293,35 @@ async function poll() {
   }
   if (changed) render();
   setTimeout(poll, CFG.poll);
+}
+
+// On claude.ai a page's own files only change with a new artifact version, and a
+// new version reloads every open view. So when the artifact database is there,
+// the state lives in one document ({ state, events, coverage } as text) and
+// updates arrive live with no reload. serve.py and other hosts have no database
+// and keep polling files.
+async function startDb() {
+  const db = await Promise.race([
+    window.claude?.use?.("db") ?? Promise.resolve(null),
+    new Promise((r) => setTimeout(() => r(null), 4000)),
+  ]).catch(() => null);
+  if (!db) return false;
+  let answered = false;
+  let fellBack = false;
+  const timer = setTimeout(() => { if (!answered) setConn("off", "Waiting for data"); }, 10000);
+  db.doc(CFG.dbDoc).onSnapshot((snap) => {
+    if (!snap.metadata?.fromCache) { answered = true; clearTimeout(timer); }
+    if (!snap.exists) {
+      // No live document yet: show the published files (or the demo) until one appears.
+      if (!fellBack && mode === "starting") { fellBack = true; poll(); }
+      return;
+    }
+    dbLive = true;
+    if (mode !== "live") { mode = "live"; firstRender = true; }
+    setConn("live", "Live");
+    if (take(snap.data() || {})) render();
+  }, () => { clearTimeout(timer); setConn("off", "Lost connection"); });
+  return true;
 }
 
 // Re-render now and then even without changes, so heat cools and "ago" labels age.
@@ -339,4 +358,4 @@ function startDemo() {
 }
 
 if (location.protocol === "file:") startDemo();
-else poll();
+else startDb().then((ok) => { if (!ok) poll(); });

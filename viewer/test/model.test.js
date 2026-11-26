@@ -1,10 +1,11 @@
 import { test } from "node:test";
+import { load as parseYaml } from "js-yaml";
 import assert from "node:assert/strict";
 import ELK from "elkjs/lib/elk.bundled.js";
 import {
   globToRe, toMs, parseEvents, buildModel, leafStats, isFolded, layoutStructure,
   highlightSet, layoutAgents, edgePath, messagesSince, formatAgo, summarize,
-  normalizeTodos, flattenTodos, initials, resamplePoints, relations, buildTests, buildCoverage, toFraction, agentCardsData, TEST_FILE, repairCommaSplits,
+  normalizeTodos, flattenTodos, initials, resamplePoints, relations, buildTests, buildCoverage, toFraction, agentCardsData, TEST_FILE, repairCommaSplits, applyTexts,
 } from "../src/model.js";
 
 const elk = new ELK();
@@ -704,4 +705,32 @@ test("repairCommaSplits glues text that YAML split at commas back together", () 
   assert.equal(repairCommaSplits(clean), clean, "known keys with no value are left alone");
   const m = buildModel(raw, [], { now: NOW });
   assert.equal(m.byId.get("bg.db").name, "IndexedDB (words, sightings)");
+});
+
+test("applyTexts parses new texts and skips ones it has already seen", () => {
+  const a = applyTexts({}, { state: "project: A", events: '{"t":"2026-11-24T21:00:00Z","agent":"main","type":"edit"}', coverage: '{"files":{}}' }, parseYaml);
+  assert.equal(a.changed, true);
+  assert.equal(a.state.project, "A");
+  assert.equal(a.events.length, 1);
+  assert.deepEqual(a.coverage, { files: {} });
+  const b = applyTexts(a, { state: "project: A", events: a.texts.events }, parseYaml);
+  assert.equal(b.changed, false);
+  assert.equal(b.state, a.state);
+});
+
+test("applyTexts keeps the last good state when new YAML does not parse, and says so", () => {
+  const a = applyTexts({}, { state: "project: A" }, parseYaml);
+  const b = applyTexts(a, { state: "project: [unclosed" }, parseYaml);
+  assert.equal(b.state.project, "A");
+  assert.match(b.error, /did not parse/);
+  assert.equal(b.changed, false);
+});
+
+test("applyTexts treats empty events as an empty log and keeps the last report when coverage is broken", () => {
+  const a = applyTexts({}, { events: '{"t":"2026-11-24T21:00:00Z","agent":"main","type":"edit"}', coverage: '{"files":{"a.js":[1,2]}}' }, parseYaml);
+  const b = applyTexts(a, { events: "", coverage: '{"files": {"a.js": [1' }, parseYaml);
+  assert.deepEqual(b.events, []);
+  assert.deepEqual(b.coverage, { files: { "a.js": [1, 2] } });
+  const c = applyTexts(b, { coverage: '{"files":{"a.js":[2,2]}}' }, parseYaml);
+  assert.deepEqual(c.coverage.files["a.js"], [2, 2], "a later good report still lands");
 });

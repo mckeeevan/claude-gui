@@ -3,9 +3,10 @@
 
     python3 install.py /path/to/project            # hook, skill and viewer inside the project's .claude/
     python3 install.py /path/to/project --global   # hook and skill in ~/.claude/ for every project
+    python3 install.py /path/to/project --artifact # no hooks: drive a claude.ai artifact instead
 
 What it does, all safe to repeat:
-  - copies the hook script and the viewer into <.claude>/claude-gui/
+  - copies the hook script, tools/artifact_state.py and the viewer into <.claude>/claude-gui/
   - copies the skill to <.claude>/skills/claude-gui-state/SKILL.md
   - adds the hook to <.claude>/settings.json, leaving other settings and hooks alone
   - creates <project>/.claude-gui/ with a starter state.yaml and an empty events.jsonl,
@@ -13,6 +14,9 @@ What it does, all safe to repeat:
 
 The per-project install is the one to use in cloud sessions, where ~ does not last.
 Then: python3 <.claude>/claude-gui/viewer/serve.py /path/to/project
+
+--artifact skips the hooks (they can't publish an artifact, and cloud sessions
+may not run them) and prints how to publish the viewer and push live updates.
 """
 import argparse
 import json
@@ -36,6 +40,22 @@ agents:
     name: Claude
     role: Lead
 todos: []
+"""
+
+# Anyone with the link reads the live document; only editors (Claude, as the owner) write it.
+CAPABILITIES = {"db": {"rules": [{"path": "workview", "read": "view", "write": "admin"}]}}
+ARTIFACT_STEPS = """
+Publish once (and again only when the viewer code changes), with the Artifact tool:
+  file_path: {page}
+  files: {files}
+  capabilities: {caps}
+
+Every update after that, don't publish (a new version reloads every open view):
+  python3 {tool} log ... / set ...        # record what happened
+  python3 {tool} live                     # pack .claude-gui/live.json
+  ArtifactData set, collection "workview", doc_id "live",
+    file_path .claude-gui/live.json, if_version = the version the last write returned
+The page picks the document up live, with no reload.
 """
 
 
@@ -69,6 +89,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", type=pathlib.Path)
     ap.add_argument("--global", dest="glob", action="store_true", help="install the hook and skill in ~/.claude instead")
+    ap.add_argument("--artifact", action="store_true", help="no hooks; print the claude.ai artifact publish steps")
     a = ap.parse_args()
     project = a.project.expanduser().resolve()
     base = pathlib.Path.home() / ".claude" if a.glob else project / ".claude"
@@ -76,13 +97,15 @@ def main():
 
     home.mkdir(parents=True, exist_ok=True)
     shutil.copy2(HERE / "hooks" / "claude_gui_hook.py", home / "claude_gui_hook.py")
+    shutil.copy2(HERE / "tools" / "artifact_state.py", home / "artifact_state.py")
     copy_tree(HERE / "viewer", home / "viewer")
     skill = base / "skills" / "claude-gui-state"
     skill.mkdir(parents=True, exist_ok=True)
     shutil.copy2(HERE / "skill" / "SKILL.md", skill / "SKILL.md")
     command = ('python3 ~/.claude/claude-gui/claude_gui_hook.py' if a.glob
                else 'python3 "$CLAUDE_PROJECT_DIR/.claude/claude-gui/claude_gui_hook.py"')
-    add_hooks(base / "settings.json", command)
+    if not a.artifact:
+        add_hooks(base / "settings.json", command)
 
     state = project / ".claude-gui"
     state.mkdir(exist_ok=True)
@@ -91,7 +114,13 @@ def main():
     (state / "events.jsonl").touch()
 
     print(f"Claude GUI installed in {base}")
-    print(f"View it: python3 {home / 'viewer' / 'serve.py'} {project}")
+    if not a.artifact:
+        print(f"View it: python3 {home / 'viewer' / 'serve.py'} {project}")
+        return
+    viewer = home / "viewer"
+    files = {f"src/{p.name}": str(p) for p in sorted((viewer / "src").glob("*.js"))}
+    print(ARTIFACT_STEPS.format(page=viewer / "index.html", files=json.dumps(files, indent=2),
+                                caps=json.dumps(CAPABILITIES), tool=home / "artifact_state.py"))
 
 
 if __name__ == "__main__":

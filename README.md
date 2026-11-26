@@ -59,6 +59,19 @@ Then open http://localhost:8765. `install.py` puts the hook, viewer and skill in
 
 The hook also talks back to Claude: after an edit to `state.yaml` it flags values cut off by unquoted commas, and after a test run with no coverage report it tells Claude how to turn coverage on for that runner (once per session). The viewer also repairs names already cut at commas.
 
+## Use it from claude.ai
+
+In a cloud session (no hooks) or to get a shareable link, drive a published claude.ai artifact instead of `serve.py`:
+
+```bash
+python3 ~/claude-gui/install.py /path/to/project --artifact   # prints the steps below with real paths
+```
+
+1. Publish once with the Artifact tool: page `viewer/index.html`, files `viewer/src/*.js`, and `capabilities: {"db": {"rules": [{"path": "workview", "read": "view", "write": "admin"}]}}`. Republish only when the viewer code changes; a new version reloads every open view.
+2. For every update, record it with `tools/artifact_state.py` (`log` an event, `set` a state patch, `coverage` after tests), pack it with `artifact_state.py live`, and write `.claude-gui/live.json` to the artifact database: ArtifactData `set`, collection `workview`, doc `live`, `if_version` from the last write. The page reads the document live and animates the change, with no reload.
+
+The page uses the database when it has one and falls back to polling `state/*.yaml|jsonl|json` files otherwise, so `serve.py` keeps working unchanged. It is still the zero-latency option when Claude runs on the same machine with the hooks installed.
+
 The page loads D3, js-yaml and elkjs from jsDelivr, so it needs internet access. Opening `index.html` directly from disk won't work, because browsers block ES modules on `file://`. Use `serve.py`.
 
 After editing `index.template.html` or the example files, run `python3 viewer/build.py`.
