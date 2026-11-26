@@ -24,15 +24,16 @@ Each agent is a marker on the map. It stands on the part it is working on (that 
 
 ## How it works
 
-Two files in the project you're working on, in a `.claude-gui/` folder:
+Files in the project you're working on, in a `.claude-gui/` folder (or wherever `WORKVIEW_DIR` points):
 
 | File | Written by | Holds |
 | --- | --- | --- |
 | `state.yaml` | Claude, by hand, following the skill | Goal, phase, focus, thinking, app structure, agents, todos |
-| `events.jsonl` | Hooks, automatically (Claude can append too) | One timestamped line per read, edit, command, agent start or finish, message, prompt |
+| `events.jsonl` | Hooks, automatically (`auto: true`; Claude can append too) | One timestamped line per read, edit, command, test run, agent start or finish, message, pull request, prompt. Past 200 KB, older lines move to `history/` and the last 400 stay |
+| `heartbeat` | The hook | The time of the last action, so the page can show "Live" or "Idle 4m ago" |
 | `history/` | The hook | A timestamped copy of `state.yaml` each time Claude edits it |
 
-The viewer re-reads both files every second and merges them. Any tool can drive it: only the hook script is specific to Claude Code.
+The viewer re-reads the files every second (or, from a claude.ai project folder, every 2 seconds and only when the heartbeat moved) and merges them. When the heartbeat is fresh but `state.yaml` hasn't changed in 10 minutes, it shows "To-dos may be behind". Any tool can drive it: only the hook script is specific to Claude Code.
 
 ## Folder layout
 
@@ -52,6 +53,7 @@ hooks/
   settings-snippet.json   the hook config install.py registers
 tools/artifact_state.py   logs events, patches state.yaml, converts coverage, packs live.json (for the artifact)
 tools/workview_guard.py   hook that reminds Claude, and blocks ending a turn, while the view is behind
+tools/test_*.py    unit tests for both hooks
 skill/SKILL.md     instructions Claude follows
 example/.claude-gui/      sample state.yaml, events.jsonl and coverage.json (the demo data)
 ```
@@ -68,9 +70,19 @@ To update a project: `git -C ~/claude-gui pull && python3 ~/claude-gui/install.p
 
 Then open http://localhost:8765. `install.py` puts the hook, viewer and skill in the project's `.claude/` (or `~/.claude/` with `--global`), registers the hook in `settings.json` without touching other settings, and starts `.claude-gui/` if it is missing. Claude does the rest from the skill: it fills in `state.yaml` and turns on test coverage.
 
-A second hook, the Work View guard (`tools/workview_guard.py`), keeps Claude from letting the view fall behind: it reminds Claude when the view is 2 minutes behind its work, and blocks Claude from ending a turn until the view shows its latest step (once per turn, so it can't loop). In hooks mode "up to date" means `state.yaml` was updated; in artifact mode it means `workview/live` was written.
+A second hook, the Work View guard (`tools/workview_guard.py`), keeps Claude from letting the view fall behind: it reminds Claude when the view is 2 minutes or 6 steps behind its work (it never blocks a tool call), and blocks Claude from ending a turn until the view shows its latest step (once per turn, so it can't loop). In hooks mode "up to date" means `state.yaml` was updated; in artifact mode it means `workview/live` was written.
 
 The event hook also talks back to Claude: after an edit to `state.yaml` it flags values cut off by unquoted commas, and after a test run with no coverage report it tells Claude how to turn coverage on for that runner (once per session). The viewer also repairs names already cut at commas.
+
+## Use it from a claude.ai project folder
+
+When Claude Code runs in a claude.ai project, the hooks can write straight into the project's shared folder and the published page can read it there, so the activity feed never falls behind and Claude never pushes anything but its own `state.yaml` edits:
+
+```bash
+python3 ~/claude-gui/install.py /path/to/project --dir /mnt/project-files/work-view --files-project chan_...
+```
+
+This saves `WORKVIEW_DIR` in `.claude/settings.json` (`"env"`), so every hook and `artifact_state.py` use that folder, and prints the publish steps with `capabilities: {"files": {"project": "chan_..."}, "db": ...}`. The page asks each viewer once for access to the project's files, then polls `work-view/heartbeat` every 2 seconds; only when it changed does it read the new tail of `events.jsonl` (by byte offset) and `state.yaml`. Viewers who can't open the project's files fall back to the database document, then to plain files.
 
 ## Use it from claude.ai
 
@@ -96,11 +108,15 @@ After editing `index.template.html` or the example files, run `python3 viewer/bu
 - **"Waiting for data":** the artifact database didn't answer within 10 seconds. Reload; if it persists, check the artifact was published with the `db` capability.
 - **A warning bar about state.yaml:** the file didn't parse, so the last good version is shown. Fix the YAML, or rewrite it with `python3 tools/artifact_state.py set`.
 - **Coverage shows "no tests" or "tested, no %":** the tests don't write a coverage report yet. See "Turning on coverage" in the skill.
+- **"Idle 12m ago" while Claude is working:** the hooks aren't writing to the folder the page reads. Check `WORKVIEW_DIR` in `.claude/settings.json` matches the folder in the page (`filesDir`, default `work-view`).
+- **"To-dos may be behind":** the hooks see Claude working but `state.yaml` hasn't changed in 10 minutes. Ask Claude to update its to-dos; the guard also reminds it.
 - **Nothing moves when Claude works:** the hooks aren't running (check `.claude/settings.json` has the `claude_gui_hook.py` and `workview_guard.py` entries, rerun `install.py`, then start a new session), or, in artifact mode, Claude hasn't pushed `workview/live`.
 
 ## Configuration
 
-Set `window.CLAUDE_GUI` before `src/app.js` loads to change where the page reads from: `{ state, events, coverage }` file paths (default `state/state.yaml` and so on), `poll` (ms, default 1000) and `dbDoc` (default `"workview/live"`). The live document holds the three files as text: `{ "state": "...yaml...", "events": "...jsonl...", "coverage": "...json..." }`.
+Set `window.CLAUDE_GUI` before `src/app.js` loads to change where the page reads from: `{ state, events, coverage }` file paths (default `state/state.yaml` and so on), `heartbeat` (default `state/heartbeat`), `poll` (ms, default 1000), `dbDoc` (default `"workview/live"`), `filesDir` (the folder inside the claude.ai project, default `"work-view"`; empty turns the files source off) and `filesPoll` (ms, default 2000). The live document holds the files as text: `{ "state": "...yaml...", "events": "...jsonl...", "coverage": "...json...", "heartbeat": "..." }`.
+
+The hooks and tools read `WORKVIEW_DIR` (absolute, or relative to the project) for the state folder; `serve.py` takes it too, or `--dir`.
 
 ## Tests
 

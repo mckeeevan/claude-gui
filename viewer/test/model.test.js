@@ -6,6 +6,7 @@ import {
   globToRe, toMs, parseEvents, buildModel, leafStats, isFolded, layoutStructure,
   highlightSet, layoutAgents, edgePath, messagesSince, formatAgo, summarize,
   normalizeTodos, flattenTodos, initials, resamplePoints, relations, buildTests, buildCoverage, toFraction, agentCardsData, TEST_FILE, repairCommaSplits, applyTexts,
+  mergeEvents, tailRead, isLive, todosBehind,
 } from "../src/model.js";
 
 const elk = new ELK();
@@ -733,4 +734,57 @@ test("applyTexts treats empty events as an empty log and keeps the last report w
   assert.deepEqual(b.coverage, { files: { "a.js": [1, 2] } });
   const c = applyTexts(b, { coverage: '{"files":{"a.js":[2,2]}}' }, parseYaml);
   assert.deepEqual(c.coverage.files["a.js"], [2, 2], "a later good report still lands");
+});
+
+// ---- live sources ---------------------------------------------------------------
+const ev = (t, extra = {}) => ({ t, _t: Date.parse(t), type: "edit", target: "src/a.ts", ...extra });
+
+test("mergeEvents keeps one copy of a line read from two sources", () => {
+  const a = [ev("2026-01-01T00:00:00Z", { auto: true, _i: 0 })];
+  const b = [ev("2026-01-01T00:00:00Z", { auto: true, _i: 5 })];
+  assert.equal(mergeEvents([a, b]).length, 1);
+});
+
+test("mergeEvents lets a hand-written event replace the hook's within two seconds", () => {
+  const auto = [ev("2026-01-01T00:00:01Z", { auto: true }), ev("2026-01-01T00:00:09Z", { auto: true })];
+  const hand = [ev("2026-01-01T00:00:00Z", { text: "Wired the overlay" })];
+  const out = mergeEvents([auto, hand]);
+  assert.deepEqual(out.map((e) => e.text ?? "auto"), ["Wired the overlay", "auto"]);
+  assert.deepEqual(out.map((e) => e._i), [0, 1]);
+});
+
+test("mergeEvents keeps an auto event for a different target", () => {
+  const out = mergeEvents([[ev("2026-01-01T00:00:01Z", { auto: true, target: "b.ts" })], [ev("2026-01-01T00:00:00Z")]]);
+  assert.equal(out.length, 2);
+});
+
+test("mergeEvents sorts by time and keeps untimed events in place", () => {
+  const out = mergeEvents([[ev("2026-01-01T00:00:05Z", { target: "x" }), { type: "note", _t: null }], [ev("2026-01-01T00:00:01Z", { target: "y" })]]);
+  assert.deepEqual(out.map((e) => e.target ?? e.type), ["y", "x", "note"]);
+});
+
+test("mergeEvents of nothing is empty", () => {
+  assert.deepEqual(mergeEvents([]), []);
+  assert.deepEqual(mergeEvents([null, undefined]), []);
+});
+
+test("tailRead reads only the new tail, and from the start after a trim", () => {
+  assert.deepEqual(tailRead(null, 50), { offset: 0, reset: true });
+  assert.equal(tailRead(50, 50), null);
+  assert.deepEqual(tailRead(50, 80), { offset: 50 });
+  assert.deepEqual(tailRead(80, 20), { offset: 0, reset: true });
+});
+
+test("isLive is true for a heartbeat under a minute old", () => {
+  assert.equal(isLive(1000, 30_000), true);
+  assert.equal(isLive(1000, 70_000), false);
+  assert.equal(isLive(null, 1000), false);
+});
+
+test("todosBehind flags fresh activity over a to-do list ten minutes old", () => {
+  const now = 20 * 60_000;
+  assert.equal(todosBehind({ heartbeatMs: now - 5000, stateMs: now - 12 * 60_000, now }), true);
+  assert.equal(todosBehind({ heartbeatMs: now - 5000, stateMs: now - 5 * 60_000, now }), false);
+  assert.equal(todosBehind({ heartbeatMs: now - 5 * 60_000, stateMs: 0, now }), false, "idle is not behind");
+  assert.equal(todosBehind({ heartbeatMs: now, stateMs: null, now }), false);
 });

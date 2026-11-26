@@ -2,14 +2,19 @@
 // This is the only module that touches `document`, `window` or the clock.
 import { select } from "d3";
 import { load as parseYaml } from "js-yaml";
-import { buildModel, parseEvents, applyTexts, layoutStructure, relations, formatAgo, summarize, flattenTodos, agentCardsData, COVERAGE_BANDS, COVERAGE_LABEL } from "./model.js";
+import { buildModel, parseEvents, applyTexts, mergeEvents, tailRead, isLive, todosBehind, toMs, layoutStructure, relations, formatAgo, summarize, flattenTodos, agentCardsData, COVERAGE_BANDS, COVERAGE_LABEL } from "./model.js";
 import { capture, play } from "./flip.js";
 import { structureMap, coverageColor } from "./structure-chart.js";
 import { agentCards } from "./agent-chart.js";
 import { todoList, stackedBar, activityFeed, agentCard, testsPanel } from "./panels.js";
 import { DEMO_SCRIPT } from "./demo.js";
 
-const CFG = { state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", poll: 1000, dbDoc: "workview/live", ...(window.CLAUDE_GUI || {}) };
+const CFG = {
+  state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", heartbeat: "state/heartbeat", poll: 1000,
+  dbDoc: "workview/live",
+  filesDir: "work-view", filesPoll: 2000, // a folder in the claude.ai project, read when the page declares the files capability
+  ...(window.CLAUDE_GUI || {}),
+};
 const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 const elk = window.ELK ? new window.ELK() : null;
 
@@ -266,33 +271,155 @@ async function fetchText(url) {
   return r.text();
 }
 
+// Every source (project files, the artifact database, files over http) hands in raw
+// texts; the state and coverage come from the first source that has them, and the
+// event logs of all of them merge into one timeline.
+const ORDER = ["files", "db", "http"];
+const sources = {};
+const logs = {}; // source -> { text, list }, so an unchanged log is not parsed again
 let texts = {}; // the raw texts last applied, so unchanged inputs are not parsed again
-function take(raw) {
-  const next = applyTexts({ state, events, coverage, texts }, raw, parseYaml);
-  ({ state, events, coverage, texts } = next);
+let heartbeatMs = null; // the last action any hook logged
+let stateSeenAt = null; // when the state text last changed, for states with no `updated` stamp
+let connected = false;
+function take(name, raw) {
+  sources[name] = { ...sources[name], ...raw };
+  const pick = (k) => ORDER.map((n) => sources[n]?.[k]).find((v) => typeof v === "string");
+  const next = applyTexts({ state, events, coverage, texts }, { state: pick("state"), coverage: pick("coverage") }, parseYaml);
+  if (next.texts.state !== texts.state) stateSeenAt = Date.now();
+  ({ state, coverage, texts } = next);
+  let changed = next.changed;
+  let logChanged = false;
+  for (const [n, src] of Object.entries(sources)) {
+    if (typeof src.events !== "string" || logs[n]?.text === src.events) continue;
+    logs[n] = { text: src.events, list: parseEvents(src.events) };
+    logChanged = true;
+  }
+  if (logChanged) {
+    const lists = Object.values(logs).map((l) => l.list);
+    events = lists.length === 1 ? lists[0] : mergeEvents(lists);
+    changed = true;
+  }
+  const beats = Object.values(sources).map((src) => toMs(String(src.heartbeat ?? "").trim())).filter(Number.isFinite);
+  heartbeatMs = beats.length ? Math.max(...beats) : null;
   if (next.error) showError(next.error);
   else if (next.changed) showError("");
-  return next.changed;
+  renderLive();
+  return changed;
+}
+
+// The dot says whether Claude is acting right now (the hooks' heartbeat), and a
+// quiet note says when the to-dos have not kept up with what the log shows.
+function renderLive(now = Date.now()) {
+  if (mode === "demo") return;
+  if (!connected) return setConn("off", mode === "starting" ? "Waiting for data" : "Lost connection");
+  if (heartbeatMs == null) setConn("live", "Live");
+  else if (isLive(heartbeatMs, now)) setConn("live", "Live");
+  else setConn("idle", `Idle ${formatAgo(heartbeatMs, now)}`);
+  const stateMs = model?.updatedAt ?? stateSeenAt;
+  const behind = todosBehind({ heartbeatMs, stateMs, now });
+  select("#behind").classed("on", behind)
+    .attr("title", behind ? `Claude is working, but the to-dos last changed ${formatAgo(stateMs, now)}` : null);
+}
+setInterval(() => renderLive(), 5000);
+
+function goLive() {
+  connected = true;
+  if (mode !== "live") { mode = "live"; firstRender = true; }
 }
 
 let dbLive = false; // set once the artifact database serves the state; file polling then stops
+let filesLive = false; // set once the project's files are readable; the other sources then only add events
 async function poll() {
-  if (dbLive) return;
+  if (dbLive || filesLive) return;
   let changed = false;
   try {
     const raw = { state: await fetchText(CFG.state) };
-    // Events and coverage are optional files: a missing log is empty, a missing report keeps the last one.
+    // Events, coverage and heartbeat are optional: a missing log is empty, a missing report keeps the last one.
     raw.events = await fetchText(CFG.events).catch(() => "");
     raw.coverage = await fetchText(CFG.coverage).catch(() => undefined);
-    changed = take(raw);
-    if (mode !== "live") { mode = "live"; firstRender = true; }
-    setConn("live", "Live");
+    raw.heartbeat = await fetchText(CFG.heartbeat).catch(() => undefined);
+    goLive();
+    changed = take("http", raw);
   } catch {
     if (mode === "starting") { startDemo(); return; }
-    setConn("off", "Lost connection");
+    connected = false;
+    renderLive();
   }
   if (changed) render();
   setTimeout(poll, CFG.poll);
+}
+
+const within = (p, ms) => Promise.race([Promise.resolve(p), new Promise((r) => setTimeout(() => r(null), ms))]).catch(() => null);
+
+// In a claude.ai project the hooks write straight into a shared project folder,
+// and a page that declares the `files` capability reads it there: nobody has to
+// push anything for the view to stay current. Every tick reads the small
+// heartbeat; only when it changed are the new tail of events.jsonl and
+// state.yaml read, so an idle session costs one tiny read per tick.
+async function startFiles() {
+  if (!CFG.filesDir) return false;
+  const files = await within(window.claude?.use?.("files"), 4000);
+  if (!files) return false;
+  const dir = String(CFG.filesDir).replace(/\/+$/, "");
+  const path = (name) => `${dir}/${name}`;
+  const text = (r) => new TextDecoder().decode(r.bytes);
+  const opt = (p) => p.catch((e) => (e?.code === "not_found" ? null : Promise.reject(e)));
+  // The first call asks the viewer for access; a missing or refused folder hands over to the next source.
+  let first = await opt(files.read(path("state.yaml"))).catch(() => null);
+  if (!first) { await new Promise((r) => setTimeout(r, 1500)); first = await opt(files.read(path("state.yaml"))).catch(() => null); }
+  if (!first) return false;
+  filesLive = true;
+  goLive();
+  let beat = null; // the heartbeat's revision last seen
+  let known = null; // bytes of events.jsonl read so far
+  let log = "";
+  let decoder = new TextDecoder();
+  let fresh = ""; // the text the last read added
+  async function readLog() {
+    let r = await opt(files.read(path("events.jsonl"), { offset: known ?? 0 })).catch((e) => {
+      if (e?.code === "bad_request") return null; // an offset past the end: the log was trimmed
+      throw e;
+    });
+    if (!r) { known = null; r = await opt(files.read(path("events.jsonl"))); if (!r) return ""; }
+    const plan = tailRead(known, r.size);
+    if (plan?.reset && known != null) { known = null; return readLog(); }
+    if (plan?.reset) { log = ""; decoder = new TextDecoder(); }
+    // stream: a character cut at the end of one read is finished by the next.
+    fresh = decoder.decode(r.bytes, { stream: true });
+    log += fresh;
+    known = (plan?.offset ?? known) + r.bytes.length;
+    return log;
+  }
+  async function tick(stateRead) {
+    let wait = CFG.filesPoll;
+    try {
+      const hb = await opt(files.read(path("heartbeat")));
+      // No heartbeat (an older hook): read on every tick.
+      if (stateRead || !hb || hb.revision !== beat) {
+        beat = hb?.revision ?? null;
+        const raw = { heartbeat: hb ? text(hb) : undefined };
+        const st = stateRead ?? await opt(files.read(path("state.yaml")));
+        if (st) raw.state = text(st);
+        const startup = known == null;
+        raw.events = await readLog();
+        // Coverage only changes after a test run, so it is read when the new tail mentions one.
+        if (startup || /"type":\s*"test"/.test(fresh)) {
+          const cov = await opt(files.read(path("coverage.json")));
+          if (cov) raw.coverage = text(cov);
+        }
+        connected = true;
+        if (take("files", raw)) render();
+      }
+    } catch (e) {
+      if (e?.code === "not_granted") { filesLive = false; poll(); return; } // hand over; never ask again
+      if (e?.code === "rate_limited") wait = Math.max(wait, e.retryAfterMs ?? 5000);
+      else if (e?.code === "changed") wait = 250; // caught mid-write; read again soon
+      else { connected = false; renderLive(); }
+    }
+    setTimeout(() => tick(), wait);
+  }
+  tick(first);
+  return true;
 }
 
 // On claude.ai a page's own files only change with a new artifact version, and a
@@ -301,26 +428,22 @@ async function poll() {
 // updates arrive live with no reload. serve.py and other hosts have no database
 // and keep polling files.
 async function startDb() {
-  const db = await Promise.race([
-    window.claude?.use?.("db") ?? Promise.resolve(null),
-    new Promise((r) => setTimeout(() => r(null), 4000)),
-  ]).catch(() => null);
+  const db = await within(window.claude?.use?.("db"), 4000);
   if (!db) return false;
   let answered = false;
   let fellBack = false;
-  const timer = setTimeout(() => { if (!answered) setConn("off", "Waiting for data"); }, 10000);
+  const timer = setTimeout(() => { if (!answered && !filesLive) setConn("off", "Waiting for data"); }, 10000);
   db.doc(CFG.dbDoc).onSnapshot((snap) => {
     if (!snap.metadata?.fromCache) { answered = true; clearTimeout(timer); }
     if (!snap.exists) {
       // No live document yet: show the published files (or the demo) until one appears.
-      if (!fellBack && mode === "starting") { fellBack = true; poll(); }
+      if (!fellBack && mode === "starting" && !filesLive) { fellBack = true; poll(); }
       return;
     }
     dbLive = true;
-    if (mode !== "live") { mode = "live"; firstRender = true; }
-    setConn("live", "Live");
-    if (take(snap.data() || {})) render();
-  }, () => { clearTimeout(timer); setConn("off", "Lost connection"); });
+    goLive();
+    if (take("db", snap.data() || {})) render();
+  }, () => { clearTimeout(timer); if (!filesLive) { connected = false; renderLive(); } });
   return true;
 }
 
@@ -357,5 +480,7 @@ function startDemo() {
   }, 2800);
 }
 
+// Sources in order: the project's files, then the artifact database, then files over http.
+// The database still runs beside the files, because events Claude writes there join the timeline.
 if (location.protocol === "file:") startDemo();
-else startDb().then((ok) => { if (!ok) poll(); });
+else startFiles().then(async (files) => { const db = await startDb(); if (!files && !db) poll(); });

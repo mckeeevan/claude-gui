@@ -70,6 +70,31 @@ class Guard(unittest.TestCase):
         self.assertIn("behind", out["hookSpecificOutput"]["additionalContext"])
         self.assertIsNone(self.edit("src/c.ts"), "at most once a minute")
 
+    def test_reminds_after_six_unseen_steps_without_blocking(self):
+        outs = [self.edit(f"src/{i}.ts") for i in range(6)]
+        self.assertEqual(outs[:5], [None] * 5)
+        self.assertIn("6 steps behind", outs[5]["hookSpecificOutput"]["additionalContext"])
+        self.assertNotIn("decision", outs[5], "a tool call is never blocked")
+        self.edit(".claude-gui/state.yaml")
+        self.assertIsNone(self.edit("src/x.ts"), "the count restarts after a push")
+
+    def test_artifact_state_set_counts_as_the_push(self):
+        self.edit("src/a.ts")
+        self.run_hook({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": "python3 .claude/claude-gui/artifact_state.py set '{session: {focus: x}}'"}})
+        self.assertIsNone(self.run_hook({"hook_event_name": "Stop"}))
+
+    def test_follows_workview_dir(self):
+        (self.root / ".claude-gui").rmdir()
+        shared = self.root / "shared"
+        shared.mkdir()
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(self.root), "WORKVIEW_DIR": str(shared)}
+        run = lambda p: subprocess.run([sys.executable, str(GUARD)], input=json.dumps(p), capture_output=True, text=True, env=env).stdout
+        run({"hook_event_name": "PostToolUse", "tool_name": "Edit", "tool_input": {"file_path": str(self.root / "a.ts")}})
+        self.assertIn("block", run({"hook_event_name": "Stop"}))
+        run({"hook_event_name": "PostToolUse", "tool_name": "Edit", "tool_input": {"file_path": str(shared / "state.yaml")}})
+        self.assertEqual(run({"hook_event_name": "Stop"}).strip(), "")
+
     def test_does_nothing_without_a_claude_gui_folder(self):
         (self.root / ".claude-gui").rmdir()
         self.edit("src/a.ts")

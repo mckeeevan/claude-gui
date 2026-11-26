@@ -4,7 +4,8 @@
     python3 serve.py /path/to/your/repo [--port 8765]
 
 Then open http://localhost:8765. The page re-reads the repo's
-.claude-gui/state.yaml and .claude-gui/events.jsonl every second.
+.claude-gui/state.yaml, events.jsonl and heartbeat every second. With
+WORKVIEW_DIR set (or --dir), it serves that folder instead.
 """
 import argparse
 import http.server
@@ -17,8 +18,8 @@ HEAD = (b'<!doctype html><html lang="en"><head><meta charset="utf-8">'
         b'<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>')
 
 
-def make_handler(project):
-    state_dir = (project / ".claude-gui").resolve()
+def make_handler(project, state_dir=None):
+    state_dir = pathlib.Path(state_dir or project / ".claude-gui").resolve()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -52,10 +53,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("project", nargs="?", default=os.getcwd())
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--dir", default=os.environ.get("WORKVIEW_DIR"), help="the state folder (default .claude-gui)")
     a = ap.parse_args()
     project = pathlib.Path(a.project).resolve()
-    (project / ".claude-gui").mkdir(exist_ok=True)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(project))
+    state = project / (a.dir or ".claude-gui")  # an absolute --dir replaces the project path
+    state.mkdir(parents=True, exist_ok=True)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(project, state))
     print(f"Claude GUI for {project}\n  http://localhost:{a.port}")
     try:
         srv.serve_forever()
