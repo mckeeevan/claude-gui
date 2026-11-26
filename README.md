@@ -38,7 +38,8 @@ The viewer re-reads the files every second (or, from a claude.ai project folder,
 ## Folder layout
 
 ```
-install.py         installs or updates a project (hooks + local page, or --artifact)
+install.py         installs or updates a project (hooks + local page, or --artifact) and its working base
+base/              subagents, rules and the CLAUDE.md section install.py gives each project
 viewer/            the page
   index.template.html   markup and styles; build.py embeds the example as demo data -> index.html
   src/model.js     pure data logic (parsing, merging, ELK layout, headline, agent cards), no DOM
@@ -74,6 +75,16 @@ Then open http://localhost:8765. `install.py` puts the hook, viewer and skill in
 A second hook, the Work View guard (`tools/workview_guard.py`), keeps Claude from letting the view fall behind: it reminds Claude when the view is 2 minutes or 6 steps behind its work (it never blocks a tool call), and blocks Claude from ending a turn until the view shows its latest step (once per turn, so it can't loop). In hooks mode "up to date" means `state.yaml` was updated; in artifact mode it means `workview/live` was written.
 
 The event hook also talks back to Claude: after an edit to `state.yaml` it flags values cut off by unquoted commas, and after a test run with no coverage report it tells Claude how to turn coverage on for that runner (once per session). The viewer also repairs names already cut at commas.
+
+## The working base
+
+`install.py` also gives each project a way of working (skip it with `--no-base`):
+
+- `.claude/agents/task-researcher.md` and `task-planner.md`: research before planning, plans in phases that can each be committed on their own, and an `/implement-<task>` command per plan. Planning files go in `.planning/`.
+- `.claude/rules/`: `coding.md`, `testing.md` (including the test-first cycle), `implementing-plans.md` and `prompts-and-agents.md`.
+- A "How to work here" section in `CLAUDE.md` between `<!-- claude-gui:start -->` markers, saying when each rule applies, plus a `## Checks` list of the project's test and build commands, detected once and then the project's to edit.
+
+Planning stops once the phases, to-dos and a design outline (a Claude Design mockup, or an outline doc) are ready, for a go-ahead. After that, every phase runs and is committed to a work branch, and Claude stops again before merging. Rerunning `install.py` updates the base files; delete the marker line at the top of one to make it yours. Where these rules came from: [docs/agent-rules-merge.md](docs/agent-rules-merge.md).
 
 ## Use it from a claude.ai project folder
 

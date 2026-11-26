@@ -12,6 +12,10 @@ What it does, all safe to repeat:
   - copies the skill to <.claude>/skills/claude-gui-state/SKILL.md
   - registers the event hook and the Work View guard in <.claude>/settings.json,
     leaving other settings and hooks alone
+  - installs the working base (unless --no-base): task-researcher and task-planner subagents
+    in .claude/agents/, shared rules in .claude/rules/, and a "How to work here" section in
+    CLAUDE.md between markers. Files you have made your own (the marker line deleted) are
+    left alone, and a "## Checks" list of the project's test and build commands is added once
   - creates <project>/.claude-gui/ (or --dir) with a starter state.yaml and an empty events.jsonl,
     keeping any that already exist; --dir is saved as WORKVIEW_DIR in settings.json "env"
 
@@ -85,6 +89,78 @@ def copy_tree(src, dst):
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns("node_modules", "test", "package*.json", "*.template.html", "build.py"))
 
 
+BASE_MARK = "<!-- claude-gui base: install.py keeps this file up to date."
+BLOCK_START, BLOCK_END = "<!-- claude-gui:start -->", "<!-- claude-gui:end -->"
+
+
+def install_managed(src, dst):
+    """Copies a base file unless the project has made it its own (by deleting the marker line)."""
+    if dst.exists() and BASE_MARK not in dst.read_text(encoding="utf-8"):
+        return f"kept your {dst.name}"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return None
+
+
+def merge_block(text, block):
+    """Puts the managed block between its markers, replacing an older copy, and leaves the rest alone."""
+    section = f"{BLOCK_START}\n{block.strip()}\n{BLOCK_END}"
+    if BLOCK_START in text and BLOCK_END in text:
+        head, rest = text.split(BLOCK_START, 1)
+        return head + section + rest.split(BLOCK_END, 1)[1]
+    return text.rstrip() + ("\n\n" if text.strip() else "") + section + "\n"
+
+
+def detect_checks(project):
+    """The commands that must pass before a phase counts as done, guessed from the project's files."""
+    checks = []
+    for pkg in [project / "package.json", *sorted(project.glob("*/package.json"))]:
+        if "node_modules" in pkg.parts:
+            continue
+        try:
+            scripts = json.loads(pkg.read_text(encoding="utf-8")).get("scripts", {})
+        except (OSError, ValueError):
+            continue
+        where = "" if pkg.parent == project else f"cd {pkg.parent.name} && "
+        runner = "pnpm" if (pkg.parent / "pnpm-lock.yaml").exists() else "yarn" if (pkg.parent / "yarn.lock").exists() else "npm"
+        for name in ("lint", "typecheck", "build", "test"):
+            if name in scripts:
+                checks.append(f"{where}{runner} {'test' if name == 'test' else 'run ' + name}")
+    py = [project / f for f in ("pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini")]
+    uv = "uv run " if (project / "uv.lock").exists() else ""
+    if any(f.exists() and ("pytest" in f.read_text(encoding="utf-8", errors="ignore") or f.name == "pytest.ini") for f in py):
+        checks.append(f"{uv}pytest")
+    else:
+        for d in sorted({t.parent for t in project.glob("*/test_*.py")}):
+            checks.append(f"python3 -m unittest discover {d.name}")
+    if any(f.exists() and "mypy" in f.read_text(encoding="utf-8", errors="ignore") for f in py):
+        checks.append(f"{uv}mypy .")
+    if (project / "Cargo.toml").exists():
+        checks += ["cargo clippy --all-targets -- -D warnings", "cargo test"]
+    if (project / "go.mod").exists():
+        checks += ["go vet ./...", "go test ./..."]
+    return checks
+
+
+def install_base(project):
+    notes = []
+    claude = project / ".claude"
+    for kind in ("agents", "rules"):
+        for src in sorted((HERE / "base" / kind).glob("*.md")):
+            note = install_managed(src, claude / kind / src.name)
+            if note:
+                notes.append(note)
+    md = project / "CLAUDE.md"
+    text = md.read_text(encoding="utf-8") if md.exists() else f"# {project.name}\n"
+    text = merge_block(text, (HERE / "base" / "CLAUDE.block.md").read_text(encoding="utf-8"))
+    if "## Checks" not in text:
+        checks = detect_checks(project)
+        lines = [f"- `{c}`" for c in checks] or ["- (none found yet: list the commands that must pass)"]
+        text += "\n## Checks\n\nA phase is done when all of these pass:\n\n" + "\n".join(lines) + "\n"
+    md.write_text(text, encoding="utf-8")
+    return notes
+
+
 def set_env(settings_path, key, value):
     try:
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -121,6 +197,7 @@ def main():
     ap.add_argument("--global", dest="glob", action="store_true", help="install the hook and skill in ~/.claude instead")
     ap.add_argument("--artifact", action="store_true", help="also print the claude.ai artifact publish steps")
     ap.add_argument("--dir", help="the state folder, e.g. a shared claude.ai project folder (saved as WORKVIEW_DIR)")
+    ap.add_argument("--no-base", action="store_true", help="skip the subagents, rules and CLAUDE.md section")
     ap.add_argument("--files-project", help="claude.ai project id (chan_...): the page reads --dir through the files capability")
     a = ap.parse_args()
     project = a.project.expanduser().resolve()
@@ -149,6 +226,10 @@ def main():
     (state / "events.jsonl").touch()
 
     print(f"Claude GUI installed in {base}")
+    if not a.no_base:
+        # The base is per project even with --global: its rules are referenced by project paths.
+        for note in install_base(project):
+            print(f"  {note} (delete-the-marker means it's yours; install.py won't update it)")
     if not a.artifact and not a.files_project:
         print(f"View it: python3 {home / 'viewer' / 'serve.py'} {project}")
         return
