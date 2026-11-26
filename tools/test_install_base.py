@@ -1,6 +1,7 @@
 """Tests for install.py's working base: python3 -m unittest discover tools"""
 import importlib.util
 import json
+import re
 import pathlib
 import tempfile
 import unittest
@@ -57,8 +58,21 @@ class Base(unittest.TestCase):
         (self.p / "CLAUDE.md").write_text(md.replace("(none found yet", "(edited"))
         install.install_base(self.p)
         md2 = (self.p / "CLAUDE.md").read_text()
-        self.assertEqual(md2.count("## Checks"), 1)
+        self.assertEqual(len(re.findall(r"^## Checks$", md2, re.M)), 1)
         self.assertIn("(edited", md2, "the checks list is the project's after the first install")
+
+    def test_an_empty_projects_checks_fill_in_once_it_has_commands(self):
+        install.install_base(self.p)
+        md = (self.p / "CLAUDE.md").read_text()
+        self.assertIn(install.NO_CHECKS, md)
+        self.assertIn("## Project", md)
+        self.assertTrue((self.p / ".claude/commands/new-project.md").exists())
+        (self.p / "go.mod").write_text("")
+        install.install_base(self.p)
+        md = (self.p / "CLAUDE.md").read_text()
+        self.assertNotIn(install.NO_CHECKS, md)
+        self.assertIn("- `go test ./...`", md)
+        self.assertEqual(len(re.findall(r"^## Project$", md, re.M)), 1)
 
 
 if __name__ == "__main__":

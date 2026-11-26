@@ -37,3 +37,4 @@ Only the Claude Code variants were used. The Copilot (`.github/agents`), DSH (`.
 | `model: sonnet` | Replace | `model: inherit`, so the agents use the session's model |
 | `uv`, testmon, docker compose, `services/api`, Fabric/Terraform examples | Skip | Project-specific; examples generalized |
 | "Copilot: don't read AGENTS.md" | Skip | Only one harness here, so there is nothing to route around |
+| (new) Setting up an empty project | Add | `base/commands/new-project.md`: research the stack, plan, outline, stop; then tests, coverage, lint, type checks, CI, `## Checks` and `## Project` |
