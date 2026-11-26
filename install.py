@@ -12,7 +12,7 @@ What it does, all safe to repeat:
   - copies the skill to <.claude>/skills/claude-gui-state/SKILL.md
   - registers the event hook and the Work View guard in <.claude>/settings.json,
     leaving other settings and hooks alone
-  - installs the working base (unless --no-base): task-researcher and task-planner subagents
+  - installs the working base (unless --no-base): task-researcher, task-planner, tester and reviewer subagents
     in .claude/agents/, shared rules in .claude/rules/, the /new-project command in
     .claude/commands/, and a "How to work here" section in
     CLAUDE.md between markers. Files you have made your own (the marker line deleted) are

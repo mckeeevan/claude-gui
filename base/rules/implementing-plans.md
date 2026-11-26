@@ -13,7 +13,7 @@ Used by the `/implement-*` commands that task-planner writes, and whenever the p
 ## Each task
 
 1. Do the tasks in order, one at a time, and tie every change to a task in the plan.
-2. Follow `.claude/rules/testing.md`: the stub, red, green, refactor cycle for new code with a test framework; for scripts and config, check the result another way and say how.
+2. Follow `.claude/rules/testing.md`: the stub, red, green, refactor cycle for new code with a test framework, with the `tester` writing the red tests; for scripts and config, check the result another way and say how.
 3. Follow the project's patterns first and outside examples second.
 4. When the task works, tick it `[x]` in the plan, and add one line per file to the changes file (Added, Modified or Removed: path and what changed). If you did something the plan didn't say, say what and why in that line.
 5. When every task in a phase is ticked, tick the phase.
@@ -21,6 +21,7 @@ Used by the `/implement-*` commands that task-planner writes, and whenever the p
 ## Phase gate and cadence
 
 - A phase is done only when every check under `## Checks` in `CLAUDE.md` passes: tests, type checks, builds, and the integration or e2e suites if the phase touched them. Capture the full output of long suites to a file (`cmd 2>&1 | tee output.txt`) and read it, rather than trusting a truncated tail.
+- Before the branch's first push, the `reviewer` reviews it (`.claude/rules/using-agents.md`); fix every finding it marks as a bug, rerun the checks, then push.
 - Then commit the phase to the work branch, never to the main branch:
 
   ```
