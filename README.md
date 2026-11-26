@@ -10,11 +10,17 @@ Tests: the hook spots test commands (npm test, pytest, jest, vitest, cargo test,
 
 Coverage: after a test run the hook also looks for a fresh coverage report (coverage/coverage-summary.json, coverage-final.json, lcov.info, coverage.py's coverage.json, Cobertura coverage.xml, or Go's cover.out) and saves per-file line counts to `.claude-gui/coverage.json`. The page maps files to parts through their `paths`. The map's Tests view shades each part by coverage, hatches parts with no tests, and outlines failing ones in red.
 
-Agents: a timeline with one lane per agent (its current task, busy stretches, a tick per action) and lines for messages, spawns and hand-backs. Hover a tick for what happened, hover a name for the agent's card.
+Agents: one card per working agent, with a ring for its todos, its task, and a ribbon of what it did over the last 10 minutes (grey reads, black edits, red failed tests, orange for what it is doing now) with message pins above. Hover a stretch for the file and time; click a card for recent actions, its last message, todos and skills. Idle agents sit as chips below.
 
 Brainstorming: parts can be `status: idea`, and a part can say `from:` which part(s) it was split off from or merged out of. The map grows new parts out of the old boxes and shrinks removed ones into whatever replaced them, so you can watch the plan reshape.
 
 Each agent is a marker on the map. It stands on the part it is working on (that box grows a lane for it), glides to the next part when it moves, and parks in a waiting area under the map when idle. Hovering an agent shows a card with what it's for, what it's doing, where, and its skills; clicking pins the card. Hovering anything (a todo, a part, an agent, a feed line) lights up the related parts, agents and todos and dims the rest.
+
+## Start here
+
+**Claude:** follow [`skill/SKILL.md`](skill/SKILL.md), starting with "First: which way is this session running?". It covers install, picking hooks or the claude.ai artifact, turning on coverage and keeping the page current. If the person saved the `work-view` skill, it points here too.
+
+**A person:** you need Python 3 and a browser with internet access (the page loads D3, js-yaml and elkjs from jsDelivr). Node is only needed to run the viewer's tests, and PyYAML (`pip install pyyaml`) only for `artifact_state.py set`. Then follow "Setup" below and ask Claude to "set up the Work View" in your project.
 
 ## How it works
 
@@ -31,18 +37,22 @@ The viewer re-reads both files every second and merges them. Any tool can drive 
 ## Folder layout
 
 ```
+install.py         installs or updates a project (hooks + local page, or --artifact)
 viewer/            the page
   index.template.html   markup and styles; build.py embeds the example as demo data -> index.html
-  src/model.js     pure data logic (parsing, merging, ELK layout, headline), no DOM
+  src/model.js     pure data logic (parsing, merging, ELK layout, headline, agent cards), no DOM
   src/structure-chart.js, src/agent-chart.js, src/panels.js   reusable D3 views
-  src/app.js       polling, demo mode and wiring
+  src/flip.js      glides HTML rows and cards to their new places
+  src/app.js       data sources (artifact database, file polling, demo) and wiring
   test/            node:test unit tests and jsdom view tests
   serve.py         local server for one project
+  legacy/          the previous page, kept as a fallback
 hooks/
-  claude_gui_hook.py      turns Claude Code hook events into events.jsonl lines
-  settings-snippet.json   hook config to merge into ~/.claude/settings.json
-skill/SKILL.md     instructions Claude follows to keep state.yaml current
-example/.claude-gui/      sample state.yaml and events.jsonl
+  claude_gui_hook.py      turns Claude Code hook events into events.jsonl lines, and warns Claude about bad state or missing coverage
+  settings-snippet.json   the hook config install.py registers
+tools/artifact_state.py   logs events, patches state.yaml, converts coverage, packs live.json (for sessions without hooks)
+skill/SKILL.md     instructions Claude follows
+example/.claude-gui/      sample state.yaml, events.jsonl and coverage.json (the demo data)
 ```
 
 ## Setup
@@ -75,6 +85,18 @@ The page uses the database when it has one and falls back to polling `state/*.ya
 The page loads D3, js-yaml and elkjs from jsDelivr, so it needs internet access. Opening `index.html` directly from disk won't work, because browsers block ES modules on `file://`. Use `serve.py`.
 
 After editing `index.template.html` or the example files, run `python3 viewer/build.py`.
+
+## If something looks wrong
+
+- **"Demo data" in the header:** the page found no state. With `serve.py`, check the path you passed holds `.claude-gui/state.yaml`. On claude.ai, the `workview/live` document hasn't been written yet.
+- **"Waiting for data":** the artifact database didn't answer within 10 seconds. Reload; if it persists, check the artifact was published with the `db` capability.
+- **A warning bar about state.yaml:** the file didn't parse, so the last good version is shown. Fix the YAML, or rewrite it with `python3 tools/artifact_state.py set`.
+- **Coverage shows "no tests" or "tested, no %":** the tests don't write a coverage report yet. See "Turning on coverage" in the skill.
+- **Nothing moves when Claude works:** the hook isn't running (check `.claude/settings.json` has the Claude GUI entries, or rerun `install.py`), or, without hooks, Claude isn't logging with `artifact_state.py`.
+
+## Configuration
+
+Set `window.CLAUDE_GUI` before `src/app.js` loads to change where the page reads from: `{ state, events, coverage }` file paths (default `state/state.yaml` and so on), `poll` (ms, default 1000) and `dbDoc` (default `"workview/live"`). The live document holds the three files as text: `{ "state": "...yaml...", "events": "...jsonl...", "coverage": "...json..." }`.
 
 ## Tests
 
