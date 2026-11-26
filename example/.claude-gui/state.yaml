@@ -1,0 +1,162 @@
+# Claude GUI state file, format version 1.
+# Claude edits this file by hand as its picture of the work changes.
+# Mechanical facts (file edits, agents starting and stopping, messages)
+# go to events.jsonl next to this file, mostly written by hooks.
+version: 1
+project: Claude GUI
+updated: 2026-11-24T21:40:00-05:00
+
+session:
+  goal: Build a live D3 view of what Claude is working on
+  phase: building          # planning | exploring | building | testing | reviewing | done
+  focus: viewer.tree       # id of the structure part Claude is focused on
+  thinking: >
+    Dependencies matter more than the folder tree. If the boxes are laid
+    out by what uses what, the live work and everything it touches line up.
+
+# Claude's mental model of the app. Each node:
+#   id      unique, dotted ids read well (viewer.tree)
+#   name    what a person would call it
+#   status  untouched | idea | planned | active | done | blocked
+#           (idea = still being brainstormed, may split, merge or vanish)
+#   from    optional id or list of ids this part was split off from or
+#           merged out of; the map grows it out of their old boxes
+#   paths   optional globs; file edits that match light this node up
+#   uses    optional list of parts this one depends on: an id, or
+#           { to: id, kind: calls | data | events, weight: 1-5 }
+#   note    optional one-liner
+#   coverage optional estimate (70% or 0.7), used when no coverage report covers the part
+structure:
+  - id: claude
+    name: Claude Code
+    status: done
+    note: Where the work happens
+    children:
+      - { id: claude.hooks, name: Hook events, status: done, uses: [{ to: hooks.tools, kind: events, weight: 3 }, { to: hooks.agents, kind: events }] }
+      - { id: claude.skill, name: Skill instructions, status: planned, paths: ["skill/**"], uses: [{ to: format.state, kind: data, weight: 2 }] }
+  - id: hooks
+    name: Hook script
+    status: planned
+    paths: ["hooks/**"]
+    children:
+      - { id: hooks.tools, name: Tool calls to events, status: planned, uses: [{ to: format.events, kind: data, weight: 3 }] }
+      - { id: hooks.agents, name: Subagent start and stop, status: planned, uses: [{ to: format.events, kind: data }] }
+      - { id: hooks.history, name: State snapshots, status: done, uses: [format.state] }
+  - id: format
+    name: File format
+    status: done
+    paths: ["example/.claude-gui/**"]
+    children:
+      - { id: format.state, name: state.yaml, status: done }
+      - { id: format.events, name: events.jsonl, status: done }
+  - id: viewer
+    name: Viewer page
+    status: active
+    paths: ["viewer/**"]
+    children:
+      - { id: viewer.loader, name: File polling, status: done, coverage: 70%, uses: [{ to: format.state, kind: data, weight: 2 }, { to: format.events, kind: data, weight: 2 }] }
+      - id: viewer.model
+        name: Data model
+        status: done
+        paths: ["viewer/src/model.js"]
+        uses: [viewer.loader]
+      - id: viewer.views
+        name: Views
+        status: active
+        children:
+          - { id: viewer.tree, name: Structure map, status: active, paths: ["viewer/tree.js"], uses: [{ to: viewer.model, weight: 3 }] }
+          - { id: viewer.agents, name: Agent graph, status: active, paths: ["viewer/agents.js"], uses: [viewer.model] }
+          - { id: viewer.todos, name: Todo list, status: planned, paths: ["viewer/todos.js"], uses: [viewer.model] }
+          - { id: viewer.feed, name: Activity feed, status: planned, paths: ["viewer/feed.js"], uses: [viewer.model] }
+  - id: replay
+    name: Replay
+    status: idea
+    note: Scrub back through history/ snapshots
+    uses: [{ to: hooks.history, kind: data }]
+  - id: panel
+    name: Desktop panel
+    status: untouched
+    note: Later, wraps the same viewer
+    uses: [{ to: viewer.views, weight: 2 }]
+
+# Test suites: what each covers and, when it fails, Claude's account of why.
+# Pass and fail counts from actual runs come from the hook (type: test
+# events), and a green run clears the failures listed here.
+#   nodes     parts the suite covers
+#   failures  { name, node (where the cause is), cause, error }
+tests:
+  - id: map
+    name: Structure map
+    nodes: [viewer.tree]
+    passed: 29
+    failed: 1
+    failures:
+      - name: arrows start on their source box
+        node: viewer.model
+        cause: ELK returns arrow points relative to their group, and the layout never adds the group's offset
+        error: expected y 214 to be within 2 of 340
+  - { id: model, name: Data model, nodes: [viewer.model, viewer.loader], passed: 52, failed: 0 }
+  - { id: hook, name: Hook script, nodes: [hooks.tools, hooks.agents], status: not_run }
+
+agents:
+  - id: main
+    name: Claude
+    role: Lead
+    about: Plans the work, edits the viewer and hands research to the others.
+    task: Building the structure map
+    nodes: [viewer.tree]
+    skills:
+      - { name: write-good-d3, description: "Pure data logic, reusable charts, keyed joins and tests for D3 code" }
+      - { name: editorial-d3-stories, description: "Newsroom typography, colour budget and motion for D3 graphics" }
+      - { name: claude-gui-state, description: "Keeps .claude-gui/state.yaml current while working" }
+  - id: explorer
+    name: Explorer
+    role: Research
+    about: Reads docs and code to answer questions, and reports back without editing.
+    task: Checking which hook events Claude Code sends
+    nodes: [hooks.agents]
+    skills: [claude-code-guide, web-search]
+  - id: styler
+    name: Styler
+    role: Builder
+    about: Builds and polishes individual views once the data model is settled.
+    task: Agent graph layout
+    nodes: [viewer.agents]
+    skills: [write-good-d3, artifact-design]
+  - id: reviewer
+    name: Reviewer
+    role: Code review
+    about: Reviews finished changes for bugs before they are shown to you.
+    task: Waiting for the next change to review
+    skills: [code-review, security-review]
+
+# Todos can hold sub-todos under children. A parent without a status
+# takes it from its children.
+todos:
+  - id: t1
+    text: Settle the file format
+    owner: main
+    node: format
+    children:
+      - { id: t1a, text: state.yaml sections, status: done }
+      - { id: t1b, text: events.jsonl fields, status: done }
+  - { id: t2, text: Poll both files and keep the last good parse, status: done, owner: main, node: viewer.loader }
+  - id: t3
+    text: Draw the structure map
+    owner: main
+    node: viewer.tree
+    children:
+      - { id: t3a, text: Nested boxes from the structure, status: done }
+      - { id: t3b, text: Dependency arrows between parts, status: in_progress }
+      - { id: t3c, text: Fold finished groups, status: pending }
+  - { id: t4, text: Animate messages between agents, status: in_progress, owner: styler, node: viewer.agents }
+  - id: t5
+    text: Map Claude Code hook events
+    owner: explorer
+    node: hooks
+    children:
+      - { id: t5a, text: Tool calls, status: in_progress, node: hooks.tools }
+      - { id: t5b, text: Subagent start and stop, status: pending, node: hooks.agents }
+  - { id: t6, text: Todo list with sub-todos, status: pending, owner: main, node: viewer.todos }
+  - { id: t7, text: Write the skill instructions, status: pending, node: claude.skill }
+  - { id: t8, text: Wrap as a panel beside the chat, status: blocked, node: panel, note: Waiting on the standalone page }

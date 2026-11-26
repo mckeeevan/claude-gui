@@ -1,0 +1,773 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<meta charset="utf-8">
+<title>Claude Work View</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Roboto+Slab:wght@500;700&display=swap">
+<style>
+/* Layout: a newsroom live page that fits one screen when it is wide enough:
+   masthead with a computed headline and four numerals, then three columns
+   (thought, tests, agents | the structure map | todos, activity log). One warm paper ground, one orange accent for "working now",
+   navy for dependencies that touch live work, warm greys for everything else.
+   Deliberately single-theme (newsprint), with every colour set explicitly. */
+:root {
+  color-scheme: light;
+  --paper: #F8F7F4; --paper-alt: #FFFFFF; --ink: #17181A; --ink-soft: #4A4D52; --grey: #6B6F76; --grey-faint: #9AA0A6;
+  --rule: #DCDBD6; --rule-soft: #EDECE8; --muted: #C9C7C1; --context: #898D93;
+  --orange: #E0670F; --orange-ink: #B4510A; --orange-soft: #F3B679; --red: #B0242F; --navy: #12496E; --done: #E6E4DE;
+  --f-display: "Roboto Slab", Rockwell, Georgia, serif;
+  --f-sans: Inter, "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", "Roboto Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box }
+html, body { background: var(--paper); color: var(--ink) }
+body { font: 400 15px/1.5 var(--f-sans); font-variant-numeric: tabular-nums; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 40px }
+.page { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px }
+.page > * { min-width: 0 }
+h1, h2, h3 { margin: 0; text-wrap: balance }
+.label { font: 700 11px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--grey) }
+.mono { font-family: var(--f-mono) }
+[hidden] { display: none !important }
+
+/* masthead */
+.mast { display: grid; gap: 10px; border-top: 3px solid var(--ink); padding-top: 14px }
+.kick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px }
+.kick .label { color: var(--orange-ink) }
+.conn { display: inline-flex; align-items: center; gap: 6px; font: 500 12px var(--f-sans); color: var(--grey) }
+.conn i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted) }
+.conn-live i { background: var(--orange); animation: beat 1.6s ease-in-out infinite }
+.conn-demo i { background: var(--navy) }
+.conn-off i { background: var(--red) }
+@keyframes beat { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--orange) 22%, transparent) } }
+#updated, #project { font: 400 12px var(--f-mono); color: var(--grey) }
+h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -0.01em; max-width: 26ch }
+.deck { margin: 0; font-size: 17px; line-height: 1.45; color: var(--ink-soft); max-width: 62ch }
+.key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--ink-soft); margin-top: 4px }
+.key span { display: inline-flex; align-items: center; gap: 6px }
+.sw { width: 14px; height: 10px; display: inline-block; border: 1px solid var(--rule) }
+.sw.active { background: var(--orange); border-color: var(--orange) }
+.sw.done { background: var(--done); border-color: var(--done) }
+.sw.planned { background: var(--paper-alt); border: 1.5px dashed var(--ink-soft) }
+.sw.untouched { background: var(--paper-alt) }
+.sw.blocked { background: var(--paper-alt); border: 2px solid var(--red) }
+.sw.dep { width: 22px; height: 0; border: 0; border-top: 3px solid var(--navy) }
+
+/* overview */
+.overview { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 40px; align-items: end }
+.bar { position: relative; height: 34px; background: var(--rule-soft) }
+.seg { position: absolute; top: 0; bottom: 0; transition: left .7s cubic-bezier(.65,0,.35,1), width .7s cubic-bezier(.65,0,.35,1);
+  display: block; line-height: 34px; padding: 0 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 12px var(--f-sans);
+  box-shadow: inset -2px 0 0 var(--paper) }
+.seg-done { background: var(--done); color: var(--ink-soft) }
+.seg-active, .seg-in_progress { background: var(--orange); color: var(--ink) }
+.seg-blocked { background: var(--red); color: var(--paper-alt) }
+.seg-planned, .seg-pending { background: var(--paper-alt); color: var(--ink-soft); background-image: repeating-linear-gradient(135deg, transparent 0 5px, var(--rule-soft) 5px 6px) }
+.seg-untouched { background: transparent; color: var(--grey) }
+.seg-idea { background: var(--paper-alt); color: var(--ink-soft); outline: 1.5px dotted var(--context); outline-offset: -3px }
+.bar .seg { cursor: default; transition: left .7s cubic-bezier(.65,0,.35,1), width .7s cubic-bezier(.65,0,.35,1), opacity .2s }
+.bar .seg.dim { opacity: .3 }
+.bar .seg.lit { box-shadow: inset 0 -3px 0 var(--navy), inset -2px 0 0 var(--paper) }
+.bar-cap { display: flex; justify-content: space-between; margin-bottom: 8px }
+.nums { display: flex; gap: 32px }
+.num b { display: block; font: 700 40px/1 var(--f-display) }
+.num b.hot { color: var(--orange) }
+.num span { font-size: 12.5px; color: var(--grey) }
+
+/* pull quote */
+.now { margin: 0; display: grid; grid-template-columns: 3px minmax(0, 1fr); gap: 0 20px }
+.now::before { content: ""; background: var(--orange) }
+.crumb { font: 400 12.5px var(--f-mono); color: var(--grey); margin-bottom: 6px }
+.crumb span + span::before { content: " › "; color: var(--grey-faint) }
+.crumb .here { color: var(--orange-ink); font-weight: 500 }
+#thought { margin: 0; font: 500 clamp(19px, 2.2vw, 24px)/1.4 var(--f-display); max-width: 48ch }
+
+/* section heads */
+.sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px 16px; flex-wrap: wrap;
+  border-top: 1px solid var(--ink); padding-top: 10px; margin-bottom: 14px }
+.sec-head h2 { font: 700 21px/1.2 var(--f-display) }
+.sec-head p { margin: 2px 0 0; font-size: 13.5px; color: var(--ink-soft); max-width: 70ch }
+.sec-head .aside { font-size: 12.5px; color: var(--grey) }
+
+/* structure map */
+.map-scroll { overflow-x: auto; padding-bottom: 6px }
+#map svg { display: block; margin: 0 auto; overflow: visible; max-width: 100%; height: auto }
+/* Shrinking the whole map to a phone would take its text under 10px, so narrow screens scroll it instead. */
+@media (max-width: 860px) { #map svg { max-width: none } .map-scroll { margin-inline: -4px } }
+.part { cursor: default; transition: opacity .25s }
+.part.dim, .dep.dim { opacity: .18 }
+.group .frame { fill: var(--paper-alt); stroke: var(--rule); stroke-width: 1 }
+.group.depth-1 .frame { fill: #F3F2EE }
+.group.depth-2 .frame { fill: var(--paper-alt) }
+.group.depth-3 .frame { fill: #F3F2EE }
+.group.has-active .frame { stroke: var(--orange-soft) }
+.group .brace { font: 500 11px var(--f-mono); fill: var(--grey-faint) }
+.group .name { font: 600 13px var(--f-sans); fill: var(--ink) }
+.group.has-active .name { fill: var(--orange-ink) }
+.group .roll { font: 400 11px var(--f-mono); fill: var(--grey) }
+.group { cursor: pointer }
+.group:focus-visible .frame, .leaf:focus-visible .box { stroke: var(--navy); stroke-width: 2.5 }
+.part:focus { outline: none }
+
+.leaf .box { fill: var(--paper-alt); stroke: var(--rule); stroke-width: 1; rx: 2 }
+.leaf .name { font: 600 13px var(--f-sans); fill: var(--ink) }
+.leaf .sub { font: 400 10.5px var(--f-mono); fill: var(--grey); letter-spacing: 0.02em }
+.leaf.st-active .box { fill: var(--orange); stroke: var(--orange) }
+.leaf.st-active .sub { fill: var(--ink) }
+.leaf.st-done .box { fill: var(--done); stroke: var(--done) }
+.leaf.st-done .name { fill: var(--ink-soft) }
+.leaf.st-planned .box { stroke: var(--ink-soft); stroke-dasharray: 4 3 }
+.leaf.st-untouched .name { fill: var(--grey) }
+.leaf.st-blocked .box { stroke: var(--red); stroke-width: 2 }
+.leaf.st-blocked .sub { fill: var(--red); font-weight: 500 }
+.leaf.folded { cursor: pointer }
+.leaf.folded .box { stroke-width: 1.5 }
+.leaf .heat { fill: var(--orange) }
+.leaf.st-active .heat { fill: var(--ink); opacity: .55 }
+.leaf .pulse { fill: none; stroke: var(--orange); stroke-width: 2; opacity: 0 }
+.leaf.st-active .pulse { animation: halo 2.2s ease-out infinite; transform-box: fill-box; transform-origin: center }
+@keyframes halo { 0% { opacity: .7; transform: scale(1) } 100% { opacity: 0; transform: scale(1.14, 1.4) } }
+.leaf .now .ring { fill: none; stroke: var(--ink); stroke-width: 1.5; rx: 4 }
+.leaf .now .tag { font: 700 10px var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--orange-ink) }
+.chip rect { fill: var(--ink) }
+.chip text { font: 600 9.5px var(--f-sans); fill: var(--paper-alt) }
+.leaf.st-active .chip rect { fill: var(--ink) }
+
+.dep { fill: none; stroke-linecap: round }
+.dep.cold { stroke: var(--context); opacity: .55 }
+.dep.hot { stroke: var(--navy); opacity: .9 }
+.dep.kind-events { stroke-dasharray: 5 4 }
+.dep.kind-data { stroke-dasharray: 1 4 }
+.arrow.hot path { fill: var(--navy) }
+.arrow.cold path { fill: var(--context) }
+
+/* agents on the map */
+.bullpen .pen { fill: var(--rule-soft) }
+.bullpen .pen-title { font: 700 11px var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--grey) }
+.bullpen .pen-note { font: 400 11px var(--f-sans); fill: var(--grey) }
+.token { cursor: pointer; transition: opacity .25s }
+.token .disc { fill: var(--ink); stroke: var(--paper-alt); stroke-width: 2 }
+.token .ini { font: 700 10.5px var(--f-sans); fill: var(--paper-alt); text-anchor: middle; pointer-events: none }
+.token .halo { fill: none; stroke: var(--ink); stroke-width: 1.5; opacity: 0 }
+.token.status-working .halo { animation: token 1.8s ease-out infinite; transform-box: fill-box; transform-origin: center }
+.token.parked .disc { fill: var(--paper-alt); stroke: var(--context); stroke-width: 1.5 }
+.token.parked .ini { fill: var(--ink-soft) }
+.token.dim { opacity: .2 }
+.token.lit .disc { stroke: var(--navy); stroke-width: 3 }
+.token:focus { outline: none }
+.token:focus-visible .disc { stroke: var(--navy); stroke-width: 3 }
+@keyframes token { from { opacity: .6; transform: scale(1) } to { opacity: 0; transform: scale(1.7) } }
+.part.lit .box, .group.lit .frame { stroke: var(--navy); stroke-width: 2 }
+.part.lit.st-done .box { stroke: var(--navy) }
+
+/* linked highlighting in the panels */
+.todo, .arow, .ev { transition: opacity .2s, background-color .2s }
+.todo.dim, .arow.dim, .ev.dim { opacity: .3 }
+.todo.lit, .arow.lit, .ev.lit { background: color-mix(in srgb, var(--navy) 7%, transparent) }
+.agent { transition: opacity .2s }
+.agent.dim { opacity: .25 }
+
+/* agent explainer card */
+.card { position: fixed; z-index: 20; width: min(320px, calc(100vw - 24px)); background: var(--paper-alt); color: var(--ink);
+  border: 1px solid var(--ink); padding: 14px 16px; font-size: 13.5px; box-shadow: 4px 4px 0 var(--rule) }
+.card.pinned { border-width: 2px }
+.card-head { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; margin-bottom: 10px }
+.card-head .ini { width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: var(--paper-alt); font: 700 11.5px/30px var(--f-sans); text-align: center }
+.card.status-working .card-head .ini { background: var(--orange); color: var(--ink) }
+.card-name { display: block; font: 700 17px/1.2 var(--f-display) }
+.card-role { font: 400 11.5px var(--f-mono); color: var(--grey) }
+.card-close { border: 0; background: none; font: 400 22px/1 var(--f-sans); color: var(--grey); cursor: pointer; padding: 0 4px }
+.card-close:focus-visible { outline: 2px solid var(--navy) }
+.card dl { margin: 0; display: grid; gap: 5px }
+.card .fact { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px }
+.card dt { color: var(--grey); font-size: 12px }
+.card dd { margin: 0; overflow-wrap: anywhere }
+.card-skills { margin-top: 12px; border-top: 1px solid var(--rule); padding-top: 10px }
+.card-skills ul, .skills ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px }
+.card-skills code, .skills code { font: 500 11.5px var(--f-mono); background: var(--rule-soft); padding: 1px 5px }
+.card-skills li span, .skills li span { color: var(--ink-soft); font-size: 12.5px }
+.card.pinned .card-skills li { display: grid; gap: 2px }
+.card-skills code, .skills code { justify-self: start }
+.card .hint { margin: 6px 0 0; font-size: 12px; color: var(--grey) }
+.skills { grid-column: 2 / -1; font-size: 12.5px }
+.skills summary { cursor: pointer; color: var(--navy); font-weight: 500; width: max-content }
+.skills summary:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px }
+.skills li { display: grid; gap: 1px; padding: 2px 0 }
+
+/* agents + todos */
+.lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 40px; align-items: start }
+#agents svg { width: 100%; max-width: 460px; height: auto; display: block; margin: 0 auto }
+.edge { fill: none; stroke: var(--muted) }
+.edge.recent { stroke: var(--navy); stroke-opacity: .7 }
+.agent text { text-anchor: middle; fill: var(--ink) }
+.agent .nm { font: 600 12.5px var(--f-sans); paint-order: stroke; stroke: var(--paper); stroke-width: 4px }
+.agent .st { font: 400 10.5px var(--f-mono); fill: var(--grey); paint-order: stroke; stroke: var(--paper); stroke-width: 4px }
+.agent .ini { font: 700 12px var(--f-sans); fill: var(--paper-alt); dominant-baseline: central }
+.agent .disc { fill: var(--ink) }
+.agent.status-working .disc { fill: var(--orange) }
+.agent.status-working .ini { fill: var(--ink) }
+.agent.status-done .disc, .agent.status-idle .disc { fill: var(--paper-alt); stroke: var(--ink-soft); stroke-width: 1.5 }
+.agent.status-done .ini, .agent.status-idle .ini { fill: var(--ink-soft) }
+.agent.person .disc { fill: var(--navy) }
+.agent.person .ini { fill: var(--paper-alt) }
+.agent .ring { fill: none; stroke: var(--orange); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: ring 1.8s ease-out infinite }
+.agent:not(.status-working) .ring { display: none }
+@keyframes ring { from { transform: scale(1); opacity: .9 } to { transform: scale(1.6); opacity: 0 } }
+.agent:focus { outline: none }
+.agent:focus-visible .disc { stroke: var(--navy); stroke-width: 3 }
+.packet { fill: var(--orange); stroke: var(--paper); stroke-width: 1.5 }
+.agent-list { display: grid; margin-top: 12px; border-top: 1px solid var(--rule) }
+.arow { display: grid; grid-template-columns: 30px auto auto minmax(0, 1fr); gap: 4px 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--rule-soft); font-size: 13.5px }
+.arow .ini { font: 700 10px/16px var(--f-sans); text-align: center; background: var(--ink); color: var(--paper-alt); border-radius: 2px }
+.arow.status-working .ini { background: var(--orange); color: var(--ink) }
+.arow .state { font: 400 11px var(--f-mono); color: var(--grey) }
+.arow.status-working .state { color: var(--orange-ink) }
+.arow .task { color: var(--ink-soft); min-width: 0; overflow-wrap: anywhere }
+
+.todo-bar { height: 26px; margin-bottom: 10px }
+.todo-bar .seg { font-size: 11.5px; line-height: 26px }
+.todos { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule) }
+.todo { display: grid; grid-template-columns: 18px 16px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 7px 0 7px calc(var(--depth, 0) * 26px);
+  border-bottom: 1px solid var(--rule-soft); font-size: 14px }
+.todo.depth-0.parent { font-weight: 600 }
+.todo:not(.depth-0) { font-size: 13.5px }
+.fold { width: 18px; height: 18px; padding: 0; border: 1px solid var(--rule); background: var(--paper-alt); color: var(--ink-soft); font: 600 13px/1 var(--f-mono); cursor: pointer; border-radius: 2px }
+.fold:hover { border-color: var(--ink-soft) }
+.fold:focus-visible { outline: 2px solid var(--navy); outline-offset: 1px }
+.fold[hidden] { display: block !important; visibility: hidden }
+.todo .box { width: 14px; height: 14px; margin-top: 3px; border: 1.5px solid var(--context); background: var(--paper-alt); position: relative }
+.todo .box.in_progress { border-color: var(--orange); background: linear-gradient(90deg, var(--orange) 50%, var(--paper-alt) 50%) }
+.todo .box.done { border-color: var(--ink-soft); background: var(--ink-soft) }
+.todo .box.done::after { content: ""; position: absolute; left: 3.5px; top: 0.5px; width: 4px; height: 8px; border: solid var(--paper-alt); border-width: 0 2px 2px 0; transform: rotate(45deg) }
+.todo .box.blocked { border-color: var(--red) }
+.todo .box.blocked::after { content: ""; position: absolute; left: 1px; right: 1px; top: 5px; height: 2px; background: var(--red) }
+.todo.done .ttl { color: var(--grey); text-decoration: line-through; text-decoration-color: var(--muted) }
+.todo .txt { min-width: 0; overflow-wrap: anywhere }
+.todo .note { display: block; font-size: 12.5px; font-weight: 400; color: var(--grey) }
+.todo .meta { display: flex; gap: 8px; align-items: center; font: 400 11.5px var(--f-sans); color: var(--grey); white-space: nowrap; padding-top: 2px }
+.todo .prog { font: 500 11px var(--f-mono); color: var(--ink-soft) }
+.todo .own { font: 700 9.5px/15px var(--f-sans); padding: 0 4px; background: var(--ink); color: var(--paper-alt); border-radius: 2px }
+
+/* activity */
+.feed { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; border-top: 1px solid var(--rule) }
+.ev { display: grid; grid-template-columns: 74px 96px minmax(0, 1fr); gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--rule-soft); align-items: baseline; font-size: 13.5px }
+.ev .when { font: 400 11.5px var(--f-mono); color: var(--grey) }
+.ev .who { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ev .what { min-width: 0; overflow-wrap: anywhere; color: var(--ink-soft) }
+.ev .verb { color: var(--ink) }
+.ev .tgt { font: 400 12px var(--f-mono); color: var(--ink); background: var(--rule-soft); padding: 0 5px; margin-left: 4px }
+.ev .in { color: var(--grey) }
+.ev.type-message .verb, .ev.type-spawn .verb, .ev.type-done .verb { color: var(--navy); font-weight: 600 }
+.ev.new { animation: flash 1.4s ease-out }
+@keyframes flash { from { background: color-mix(in srgb, var(--orange) 20%, transparent) } to { background: transparent } }
+
+.empty { color: var(--grey); font-size: 13.5px; padding: 8px 0; margin: 0 }
+.err { margin: 0; padding: 10px 14px; border-left: 3px solid var(--red); background: var(--paper-alt); font-size: 13.5px; color: var(--red) }
+footer { border-top: 1px solid var(--rule); padding-top: 10px; font-size: 12px; color: var(--grey); display: flex; flex-wrap: wrap; gap: 4px 18px }
+
+@media (max-width: 860px) {
+  .lower { grid-template-columns: minmax(0, 1fr) }
+  .overview { grid-template-columns: minmax(0, 1fr) }
+  .nums { justify-content: space-between }
+  .num b { font-size: 32px }
+  .ev { grid-template-columns: 64px minmax(0, 1fr) } .ev .what { grid-column: 1 / -1 }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conn-live i, .leaf.st-active .pulse, .agent .ring, .ev.new, .token.status-working .halo { animation: none }
+  .seg { transition: none }
+}
+
+/* ---- one-screen dashboard ------------------------------------------------
+   Wide screens get a fixed-height page: masthead on top, then three columns
+   (thought, tests and agents | the map | todos and the feed). Each side column
+   scrolls inside itself and the map scales to fit, so nothing needs the page
+   to scroll. Narrow screens fall back to one stacked column. */
+.mast { grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px 32px }
+.mast-main { display: grid; gap: 6px; min-width: 0 }
+h1 { font-size: clamp(22px, 2.1vw, 30px); max-width: 48ch }
+.deck { font-size: 14.5px; max-width: 90ch }
+.nums { gap: 26px }
+.num b { font-size: 32px }
+.num b.bad { color: var(--red) }
+.num b.ok { color: var(--ink) }
+.dash { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px }
+.col { display: grid; gap: 26px; align-content: start; min-width: 0 }
+.panel { min-width: 0 }
+.sec-head { margin-bottom: 10px; padding-top: 8px }
+.sec-head h2 { font-size: 18px }
+.key { font-size: 12px; gap: 3px 12px; margin: 0; color: var(--grey) }
+.sw.idea { background: transparent; border: 1.5px dotted var(--context) }
+.sw.failing { width: 16px; height: 16px; border-radius: 50%; background: var(--red); border-color: var(--red); color: var(--paper-alt);
+  font: 700 9px/14px var(--f-sans); font-style: normal; text-align: center }
+.parts-bar { height: 22px; margin-bottom: 8px }
+.parts-bar .seg { font-size: 11px; line-height: 22px }
+.map-hint { margin: 6px 0 0; font-size: 12px; color: var(--grey); max-width: 100ch }
+.now { padding: 2px 0 }
+#thought { font-size: 18px; max-width: none }
+#agents svg { max-width: 340px }
+.arow { font-size: 13px; padding: 6px 0 }
+.todo { font-size: 13.5px; padding-block: 5px }
+.todo:not(.depth-0) { font-size: 13px }
+.ev { grid-template-columns: 62px minmax(0, 1fr); gap: 2px 10px; font-size: 13px; padding: 6px 0 }
+.ev .who { grid-column: 2 }
+.ev .what { grid-column: 2 }
+.ev .when { grid-row: 1 / span 2 }
+.feed { max-height: none }
+
+/* map: idea parts and failing tests */
+.leaf.st-idea .box { fill: transparent; stroke: var(--context); stroke-dasharray: 1.5 3; stroke-width: 1.5; stroke-linecap: round }
+.leaf.st-idea .name { fill: var(--ink-soft); font-style: italic }
+.group.st-idea .frame { stroke: var(--context); stroke-dasharray: 1.5 3; stroke-linecap: round }
+.leaf.failing .box { stroke: var(--red); stroke-width: 2 }
+.leaf.failing .sub { fill: var(--red); font-weight: 500 }
+.fail-badge rect { fill: var(--red); stroke: var(--paper-alt); stroke-width: 2 }
+.fail-badge text { font: 700 10.5px var(--f-sans); fill: var(--paper-alt) }
+.group .fails { font: 600 11px var(--f-sans); fill: var(--red) }
+.group.has-failing .frame { stroke: color-mix(in srgb, var(--red) 55%, var(--rule)) }
+
+/* tests panel */
+.tests-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 10px }
+.tests-big b { display: block; font: 700 26px/1.1 var(--f-display) }
+.tests-big.failing b { color: var(--red) }
+.tests-big.running b { color: var(--orange-ink) }
+.tests-big.not_run b { color: var(--grey) }
+.tests-big span { font-size: 12px; color: var(--grey); overflow-wrap: anywhere }
+.runs { display: grid; gap: 2px }
+.run-strip { display: block; max-width: 100%; height: auto }
+.run-strip .base { stroke: var(--ink); stroke-width: 1 }
+.run .pass { fill: var(--done) }
+.run.ok .pass { fill: var(--context) }
+.run .fail { fill: var(--red) }
+.run.running .pass { fill: var(--orange); animation: blink 1.2s ease-in-out infinite }
+@keyframes blink { 50% { opacity: .35 } }
+.runs-cap { font-size: 11px; color: var(--grey) }
+.suites { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule) }
+.suite { padding: 7px 0 8px; border-bottom: 1px solid var(--rule-soft); transition: opacity .2s, background-color .2s }
+.suite:focus { outline: none } .suite:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px }
+.suite-head { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 13.5px }
+.suite .mark { font: 700 12px var(--f-sans); color: var(--grey); text-align: center }
+.suite.failing .mark { color: var(--red) }
+.suite.passing .mark { color: var(--ink-soft) }
+.suite .sname { font-weight: 600; min-width: 0; overflow-wrap: anywhere }
+.suite .counts { font: 400 11px var(--f-mono); color: var(--grey); white-space: nowrap }
+.suite.failing .counts { color: var(--red) }
+.sbar { display: flex; height: 4px; margin: 5px 0 0 24px; background: var(--rule-soft) }
+.sbar i { display: block; height: 100%; transition: width .5s }
+.sbar .p { background: var(--context) } .sbar .f { background: var(--red) }
+.suite .covers { margin: 4px 0 0 24px; font-size: 12px; color: var(--grey) }
+.failures { list-style: none; margin: 6px 0 0 24px; padding: 0; display: grid; gap: 6px }
+.failure { border-left: 2px solid var(--red); padding: 2px 0 2px 9px; display: grid; gap: 1px; font-size: 12.5px; transition: background-color .2s }
+.failure:focus { outline: none } .failure:focus-visible { outline: 2px solid var(--navy) }
+.failure .fname { font: 500 12px var(--f-mono); color: var(--ink); overflow-wrap: anywhere }
+.failure .fwhere { color: var(--navy); font-weight: 600 }
+.failure .fcause { color: var(--ink-soft) }
+.failure .fcause.unknown { color: var(--grey); font-style: italic }
+.failure .ferr { font: 400 11px var(--f-mono); color: var(--grey); overflow-wrap: anywhere; white-space: pre-wrap }
+.untraced .mark { color: var(--orange-ink) }
+.untraced .failure { border-left-color: var(--orange) }
+.suite.dim, .failure.dim { opacity: .3 }
+.suite.lit, .failure.lit { background: color-mix(in srgb, var(--navy) 7%, transparent) }
+
+@media (min-width: 1100px) {
+  body { padding-block: 14px 10px; height: 100vh; overflow: hidden }
+  .page { max-width: none; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); gap: 14px }
+  .mast { padding-top: 10px }
+  .dash { grid-template-columns: minmax(250px, 20%) minmax(0, 1fr) minmax(280px, 22%); gap: 24px; min-height: 0 }
+  .col { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 4px }
+  /* The map column is a flex stack whose map area takes all the height left. */
+  .col-map { display: flex; flex-direction: column; overflow: hidden; gap: 0 }
+  .col-map .map-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 }
+  #map { height: 100%; display: flex; align-items: flex-start; justify-content: center }
+  #map svg { width: 100%; height: 100%; max-width: 100%; max-height: 100% }
+  /* Right column: todos and feed split the height and scroll separately. */
+  .col-right { display: flex; flex-direction: column; overflow: hidden; gap: 18px; padding-right: 0 }
+  .panel-todos, .panel-feed { min-height: 0; display: flex; flex-direction: column }
+  .panel-todos { flex: 1.25 } .panel-feed { flex: 1 } .panel-agents { flex: none }
+  .todos, .feed { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin }
+  footer { padding-top: 6px; font-size: 11px }
+}
+@media (max-width: 860px) {
+  .mast { grid-template-columns: minmax(0, 1fr) }
+  .nums { flex-wrap: wrap; gap: 14px 24px }
+}
+@media (min-width: 1100px) and (max-height: 860px) {
+  .map-hint { display: none }
+  #thought { font-size: 16px }
+}
+@media (min-width: 1100px) and (max-height: 760px) {
+  .deck { display: none }
+  .num b { font-size: 26px }
+  .parts-bar { display: none }
+}
+/* "Full size" shows the map at its natural scale and lets its column scroll, for big maps. */
+.zoom { margin-left: 10px; vertical-align: 3px; font: 500 11.5px var(--f-sans); color: var(--navy); background: var(--paper-alt);
+  border: 1px solid var(--rule); padding: 2px 8px; border-radius: 2px; cursor: pointer }
+.zoom:hover { border-color: var(--navy) }
+.zoom:focus-visible { outline: 2px solid var(--navy); outline-offset: 1px }
+.zoom[hidden] { display: none }
+@media (max-width: 1099px) {
+  .zoom { display: none }
+  /* Stacked: thought, then the map, then tests, todos, the feed and agents. */
+  .col-left { display: contents }
+  .col-left .now { order: 1 } .col-map { order: 2 } .panel-tests { order: 3 } .col-right { order: 4 }
+}
+body.map-full #map { display: block; height: auto }
+body.map-full #map svg { width: auto !important; height: auto !important; max-width: none !important; max-height: none !important }
+
+/* map lens: Work (status) or Tests (coverage) */
+.lens { display: inline-flex; margin-left: 12px; vertical-align: 3px; border: 1px solid var(--ink); border-radius: 2px; overflow: hidden }
+.lens button { font: 600 11.5px var(--f-sans); padding: 2px 10px; border: 0; background: var(--paper-alt); color: var(--ink); cursor: pointer }
+.lens button[aria-pressed="true"] { background: var(--ink); color: var(--paper-alt) }
+.lens button:focus-visible { outline: 2px solid var(--navy); outline-offset: -2px }
+body:not(.lens-tests) .key-tests, body.lens-tests .key-work, body:not(.lens-tests) #cov-bar, body.lens-tests #parts-bar { display: none }
+.sw.ramp { width: 44px; border: 0; background: linear-gradient(90deg, #DCEFEC, #8CCFC9, #2A9D97, #12496E) }
+.sw.tested { background: var(--paper-alt); border: 1.5px dashed #2A9D97 }
+.sw.hatch { background: repeating-linear-gradient(45deg, var(--paper-alt) 0 2px, var(--rule) 2px 4px) }
+.seg-good { background: #12496E; color: var(--paper-alt) }
+.seg-partial { background: #2A9D97; color: var(--paper-alt) }
+.seg-low { background: #8CCFC9; color: var(--ink) }
+.seg-tested { background: var(--paper-alt); color: var(--ink-soft); outline: 1.5px dashed #2A9D97; outline-offset: -2px }
+.seg-untested { background: repeating-linear-gradient(45deg, var(--paper-alt) 0 3px, var(--rule) 3px 6px); color: var(--ink-soft) }
+.lens-tests .leaf .box { stroke: var(--rule); stroke-width: 1; stroke-dasharray: none }
+.lens-tests .leaf .pulse, .lens-tests .leaf .heat { display: none }
+.lens-tests .leaf .name { fill: var(--ink); font-style: normal }
+.lens-tests .leaf .sub { fill: var(--ink-soft); font-weight: 400 }
+.lens-tests .leaf.on-dark .name { fill: var(--paper-alt) }
+.lens-tests .leaf.on-dark .sub { fill: #DCEFEC }
+.lens-tests .leaf.cov-tested .box { stroke: #2A9D97; stroke-dasharray: 4 3; stroke-width: 1.5 }
+.lens-tests .leaf.failing .box { stroke: var(--red); stroke-width: 2.5; stroke-dasharray: none }
+.lens-tests .group .frame { stroke: var(--rule) }
+.lens-tests .group .name { fill: var(--ink) }
+.lens-tests .group .roll { fill: var(--ink-soft); font-weight: 500 }
+
+/* tests panel */
+.tests-top { display: flex; gap: 28px; margin-bottom: 12px }
+.tnum b { display: block; font: 700 30px/1.05 var(--f-display) }
+.tnum.cov b { color: #12496E }
+.tnum.pass.failing b { color: var(--red) }
+.tnum.pass.running b { color: var(--orange-ink) }
+.tnum span { font-size: 12px; color: var(--grey) }
+.runs { display: flex; align-items: center; gap: 10px; margin-bottom: 12px }
+.runs .ago { font: 400 11px var(--f-mono); color: var(--grey) }
+.tests .failures, #tests .failures { margin: 0 0 12px; list-style: none; padding: 0; display: grid; gap: 8px }
+.weak .label { display: block; margin-bottom: 6px }
+.weak ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px }
+.weak li { display: grid; grid-template-columns: minmax(0, 1fr) 70px 38px; gap: 10px; align-items: center; font-size: 13px; padding: 3px 0; cursor: default; transition: opacity .2s }
+.weak li:focus { outline: none } .weak li:focus-visible { outline: 2px solid var(--navy) }
+.weak .wname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.weak .wbar { height: 8px; background: var(--rule-soft); position: relative }
+.weak .wbar i { position: absolute; left: 0; top: 0; bottom: 0; transition: width .5s }
+.weak li.cov-untested .wbar { background: repeating-linear-gradient(45deg, var(--paper-alt) 0 2px, var(--rule) 2px 4px) }
+.weak .wpct { font: 500 11px var(--f-mono); color: var(--ink-soft); text-align: right }
+.weak li.cov-untested .wpct { color: var(--grey) }
+.weak li.dim, .weak .untested.dim { opacity: .3 }
+.weak .untested { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-soft); padding-left: 0; cursor: default }
+.weak .untested b { font-weight: 600; color: var(--ink) }
+.weak .untested:focus { outline: none } .weak .untested:focus-visible { outline: 2px solid var(--navy) }
+.weak li.lit { background: color-mix(in srgb, var(--navy) 7%, transparent) }
+
+/* agent timeline */
+.timeline { display: block; overflow: visible }
+.lane { cursor: pointer; transition: opacity .2s }
+.lane:focus { outline: none } .lane:focus-visible .disc { stroke: var(--navy); stroke-width: 2.5 }
+.lane .disc { fill: var(--paper-alt); stroke: var(--context); stroke-width: 1.2 }
+.lane .ini { font: 700 7.5px var(--f-sans); fill: var(--ink-soft); text-anchor: middle }
+.lane.status-working .disc { fill: var(--orange); stroke: var(--orange) }
+.lane.status-working .ini { fill: var(--ink) }
+.lane.person .disc { fill: var(--navy); stroke: var(--navy) } .lane.person .ini { fill: var(--paper-alt) }
+.lane .nm { font: 600 12.5px var(--f-sans); fill: var(--ink) }
+.lane .task { font: 400 11.5px var(--f-sans); fill: var(--grey) }
+.lane.status-working .task { fill: var(--ink-soft) }
+.lane .track { fill: var(--rule-soft) }
+.lane .headbg { fill: var(--paper) }
+.lane .span { fill: #BDBAB2 }
+.lane .span.live { fill: var(--orange-soft) }
+.mark path { fill: var(--ink); stroke: var(--rule-soft); stroke-width: 1 }
+.mark.type-read path, .mark.type-search path { fill: var(--paper-alt); stroke: var(--ink-soft); stroke-width: 1.3 }
+.mark.type-test.ok path { fill: var(--ink-soft) }
+.mark.type-test.bad path { fill: var(--red) }
+.mark.type-state path, .mark.type-note path { fill: var(--grey) }
+.mark { cursor: default; transition: opacity .2s }
+.mark.dim, .lane.dim { opacity: .25 }
+.mark.lit path { stroke: var(--navy); stroke-width: 2 }
+.link .line { fill: none; stroke: var(--navy); stroke-width: 1.3; stroke-opacity: .75 }
+.link.type-spawn .line { stroke-dasharray: 3 2 }
+.link.type-prompt .line { stroke: var(--navy); stroke-opacity: 1 }
+.link .end { fill: var(--navy) }
+.timeline .axis text { font: 400 10px var(--f-mono); fill: var(--grey) }
+</style>
+
+<div class="page">
+  <header class="mast">
+    <div class="mast-main">
+      <div class="kick">
+        <span class="label" id="kicker">Live</span>
+        <span class="conn conn-demo" id="conn"><i></i><span id="conn-text">Starting</span></span>
+        <span id="project"></span>
+        <span id="updated"></span>
+      </div>
+      <h1 id="headline">Loading what Claude is working on</h1>
+      <p class="deck" id="deck"></p>
+    </div>
+    <div class="nums" aria-label="Overview">
+      <div class="num"><b id="num-parts" class="hot">–</b><span id="num-parts-note">of parts done</span></div>
+      <div class="num"><b id="num-todos">–</b><span>todos done</span></div>
+      <div class="num"><b id="num-agents">–</b><span>agents working</span></div>
+      <div class="num"><b id="num-tests">–</b><span id="num-tests-note">tests</span></div>
+    </div>
+  </header>
+
+  <p id="error" class="err" hidden></p>
+
+  <main class="dash">
+    <div class="col col-left">
+      <figure class="now" aria-live="polite">
+        <div>
+          <div class="crumb" id="crumb"></div>
+          <blockquote id="thought"></blockquote>
+        </div>
+      </figure>
+      <section class="panel panel-tests">
+        <div class="sec-head"><h2>Tests</h2></div>
+        <div id="tests"></div>
+      </section>
+    </div>
+
+    <section class="col col-map" aria-labelledby="map-h">
+      <div class="sec-head">
+        <h2 id="map-h">How the parts fit together
+          <span class="lens" role="group" aria-label="Map view"><button type="button" data-lens="work" aria-pressed="true">Work</button><button type="button" data-lens="tests" aria-pressed="false">Tests</button></span>
+          <button type="button" class="zoom" id="zoom" aria-pressed="false">Full size</button></h2>
+        <div class="key key-tests" aria-label="Key">
+          <span><i class="sw ramp"></i>0 → 100% covered</span>
+          <span><i class="sw tested"></i>Tested, no %</span>
+          <span><i class="sw hatch"></i>No tests</span>
+          <span><i class="sw failing">✕</i>Failing</span>
+        </div>
+        <div class="key key-work" aria-label="Key">
+          <span><i class="sw active"></i>Working</span>
+          <span><i class="sw planned"></i>Planned</span>
+          <span><i class="sw idea"></i>Idea</span>
+          <span><i class="sw done"></i>Done</span>
+          <span><i class="sw blocked"></i>Blocked</span>
+          <span><i class="sw failing">✕</i>Tests failing</span>
+          <span><i class="sw dep"></i>Uses, live</span>
+        </div>
+      </div>
+      <div class="bar parts-bar" id="parts-bar"></div>
+      <div class="bar parts-bar cov-bar" id="cov-bar"></div>
+      <div class="map-scroll"><div id="map"></div></div>
+    </section>
+
+    <div class="col col-right">
+      <section class="panel panel-todos">
+        <div class="sec-head"><h2>Todos</h2><span class="aside mono" id="todo-count"></span></div>
+        <div class="bar todo-bar" id="todo-bar"></div>
+        <ul class="todos" id="todos"></ul>
+      </section>
+      <section class="panel panel-agents">
+        <div class="sec-head"><h2>Agents</h2><span class="aside" id="agent-count"></span></div>
+        <div id="agents"></div>
+      </section>
+      <section class="panel panel-feed">
+        <div class="sec-head"><h2>What just happened</h2></div>
+        <ul class="feed" id="feed"></ul>
+      </section>
+    </div>
+  </main>
+
+</div>
+
+<div id="card" role="dialog" aria-live="polite" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js"></script>
+<script type="importmap">
+{ "imports": {
+  "d3": "https://cdn.jsdelivr.net/npm/d3@7.9.0/+esm",
+  "js-yaml": "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/+esm"
+} }
+</script>
+<script type="text/plain" id="demo-state"># Claude GUI state file, format version 1.
+# Claude edits this file by hand as its picture of the work changes.
+# Mechanical facts (file edits, agents starting and stopping, messages)
+# go to events.jsonl next to this file, mostly written by hooks.
+version: 1
+project: Claude GUI
+updated: 2026-11-24T21:40:00-05:00
+
+session:
+  goal: Build a live D3 view of what Claude is working on
+  phase: building          # planning | exploring | building | testing | reviewing | done
+  focus: viewer.tree       # id of the structure part Claude is focused on
+  thinking: >
+    Dependencies matter more than the folder tree. If the boxes are laid
+    out by what uses what, the live work and everything it touches line up.
+
+# Claude's mental model of the app. Each node:
+#   id      unique, dotted ids read well (viewer.tree)
+#   name    what a person would call it
+#   status  untouched | idea | planned | active | done | blocked
+#           (idea = still being brainstormed, may split, merge or vanish)
+#   from    optional id or list of ids this part was split off from or
+#           merged out of; the map grows it out of their old boxes
+#   paths   optional globs; file edits that match light this node up
+#   uses    optional list of parts this one depends on: an id, or
+#           { to: id, kind: calls | data | events, weight: 1-5 }
+#   note    optional one-liner
+#   coverage optional estimate (70% or 0.7), used when no coverage report covers the part
+structure:
+  - id: claude
+    name: Claude Code
+    status: done
+    note: Where the work happens
+    children:
+      - { id: claude.hooks, name: Hook events, status: done, uses: [{ to: hooks.tools, kind: events, weight: 3 }, { to: hooks.agents, kind: events }] }
+      - { id: claude.skill, name: Skill instructions, status: planned, paths: ["skill/**"], uses: [{ to: format.state, kind: data, weight: 2 }] }
+  - id: hooks
+    name: Hook script
+    status: planned
+    paths: ["hooks/**"]
+    children:
+      - { id: hooks.tools, name: Tool calls to events, status: planned, uses: [{ to: format.events, kind: data, weight: 3 }] }
+      - { id: hooks.agents, name: Subagent start and stop, status: planned, uses: [{ to: format.events, kind: data }] }
+      - { id: hooks.history, name: State snapshots, status: done, uses: [format.state] }
+  - id: format
+    name: File format
+    status: done
+    paths: ["example/.claude-gui/**"]
+    children:
+      - { id: format.state, name: state.yaml, status: done }
+      - { id: format.events, name: events.jsonl, status: done }
+  - id: viewer
+    name: Viewer page
+    status: active
+    paths: ["viewer/**"]
+    children:
+      - { id: viewer.loader, name: File polling, status: done, coverage: 70%, uses: [{ to: format.state, kind: data, weight: 2 }, { to: format.events, kind: data, weight: 2 }] }
+      - id: viewer.model
+        name: Data model
+        status: done
+        paths: ["viewer/src/model.js"]
+        uses: [viewer.loader]
+      - id: viewer.views
+        name: Views
+        status: active
+        children:
+          - { id: viewer.tree, name: Structure map, status: active, paths: ["viewer/tree.js"], uses: [{ to: viewer.model, weight: 3 }] }
+          - { id: viewer.agents, name: Agent graph, status: active, paths: ["viewer/agents.js"], uses: [viewer.model] }
+          - { id: viewer.todos, name: Todo list, status: planned, paths: ["viewer/todos.js"], uses: [viewer.model] }
+          - { id: viewer.feed, name: Activity feed, status: planned, paths: ["viewer/feed.js"], uses: [viewer.model] }
+  - id: replay
+    name: Replay
+    status: idea
+    note: Scrub back through history/ snapshots
+    uses: [{ to: hooks.history, kind: data }]
+  - id: panel
+    name: Desktop panel
+    status: untouched
+    note: Later, wraps the same viewer
+    uses: [{ to: viewer.views, weight: 2 }]
+
+# Test suites: what each covers and, when it fails, Claude's account of why.
+# Pass and fail counts from actual runs come from the hook (type: test
+# events), and a green run clears the failures listed here.
+#   nodes     parts the suite covers
+#   failures  { name, node (where the cause is), cause, error }
+tests:
+  - id: map
+    name: Structure map
+    nodes: [viewer.tree]
+    passed: 29
+    failed: 1
+    failures:
+      - name: arrows start on their source box
+        node: viewer.model
+        cause: ELK returns arrow points relative to their group, and the layout never adds the group's offset
+        error: expected y 214 to be within 2 of 340
+  - { id: model, name: Data model, nodes: [viewer.model, viewer.loader], passed: 52, failed: 0 }
+  - { id: hook, name: Hook script, nodes: [hooks.tools, hooks.agents], status: not_run }
+
+agents:
+  - id: main
+    name: Claude
+    role: Lead
+    about: Plans the work, edits the viewer and hands research to the others.
+    task: Building the structure map
+    nodes: [viewer.tree]
+    skills:
+      - { name: write-good-d3, description: "Pure data logic, reusable charts, keyed joins and tests for D3 code" }
+      - { name: editorial-d3-stories, description: "Newsroom typography, colour budget and motion for D3 graphics" }
+      - { name: claude-gui-state, description: "Keeps .claude-gui/state.yaml current while working" }
+  - id: explorer
+    name: Explorer
+    role: Research
+    about: Reads docs and code to answer questions, and reports back without editing.
+    task: Checking which hook events Claude Code sends
+    nodes: [hooks.agents]
+    skills: [claude-code-guide, web-search]
+  - id: styler
+    name: Styler
+    role: Builder
+    about: Builds and polishes individual views once the data model is settled.
+    task: Agent graph layout
+    nodes: [viewer.agents]
+    skills: [write-good-d3, artifact-design]
+  - id: reviewer
+    name: Reviewer
+    role: Code review
+    about: Reviews finished changes for bugs before they are shown to you.
+    task: Waiting for the next change to review
+    skills: [code-review, security-review]
+
+# Todos can hold sub-todos under children. A parent without a status
+# takes it from its children.
+todos:
+  - id: t1
+    text: Settle the file format
+    owner: main
+    node: format
+    children:
+      - { id: t1a, text: state.yaml sections, status: done }
+      - { id: t1b, text: events.jsonl fields, status: done }
+  - { id: t2, text: Poll both files and keep the last good parse, status: done, owner: main, node: viewer.loader }
+  - id: t3
+    text: Draw the structure map
+    owner: main
+    node: viewer.tree
+    children:
+      - { id: t3a, text: Nested boxes from the structure, status: done }
+      - { id: t3b, text: Dependency arrows between parts, status: in_progress }
+      - { id: t3c, text: Fold finished groups, status: pending }
+  - { id: t4, text: Animate messages between agents, status: in_progress, owner: styler, node: viewer.agents }
+  - id: t5
+    text: Map Claude Code hook events
+    owner: explorer
+    node: hooks
+    children:
+      - { id: t5a, text: Tool calls, status: in_progress, node: hooks.tools }
+      - { id: t5b, text: Subagent start and stop, status: pending, node: hooks.agents }
+  - { id: t6, text: Todo list with sub-todos, status: pending, owner: main, node: viewer.todos }
+  - { id: t7, text: Write the skill instructions, status: pending, node: claude.skill }
+  - { id: t8, text: Wrap as a panel beside the chat, status: blocked, node: panel, note: Waiting on the standalone page }
+</script>
+<script type="text/plain" id="demo-events">{"t":"2026-11-24T21:30:00-05:00","agent":"user","type":"prompt","to":"main","text":"Build a live D3 view of what Claude is working on"}
+{"t":"2026-11-24T21:30:20-05:00","agent":"main","type":"edit","target":"example/.claude-gui/state.yaml","text":"Wrote the first state file"}
+{"t":"2026-11-24T21:31:05-05:00","agent":"main","type":"spawn","to":"explorer","text":"Find which hook events Claude Code sends"}
+{"t":"2026-11-24T21:31:20-05:00","agent":"main","type":"test","target":"npm test","ok":true,"passed":74,"failed":0}
+{"t":"2026-11-24T21:31:30-05:00","agent":"explorer","type":"search","target":"hook events subagent","text":"Searching the hooks docs"}
+{"t":"2026-11-24T21:33:10-05:00","agent":"main","type":"edit","target":"viewer/index.html","text":"Added file polling"}
+{"t":"2026-11-24T21:34:05-05:00","agent":"main","type":"test","target":"npm test","ok":true,"passed":78,"failed":0}
+{"t":"2026-11-24T21:35:40-05:00","agent":"main","type":"spawn","to":"styler","text":"Lay out the agent graph"}
+{"t":"2026-11-24T21:36:30-05:00","agent":"main","type":"test","target":"npm test","ok":false,"passed":79,"failed":2,"failures":["arrows start on their source box","folds finished groups"]}
+{"t":"2026-11-24T21:37:00-05:00","agent":"styler","type":"edit","target":"viewer/agents.js"}
+{"t":"2026-11-24T21:38:12-05:00","agent":"explorer","type":"message","to":"main","text":"SubagentStart and SubagentStop both fire, with an agent id"}
+{"t":"2026-11-24T21:38:40-05:00","agent":"main","type":"test","target":"npm test","ok":false,"passed":81,"failed":1,"failures":["arrows start on their source box"]}
+{"t":"2026-11-24T21:39:30-05:00","agent":"main","type":"edit","target":"viewer/tree.js","text":"Status colors on tree nodes"}
+</script>
+<script type="text/plain" id="demo-coverage">{"t": "2026-11-24T21:38:40-05:00", "source": "coverage/lcov.info", "files": {"viewer/src/model.js": [412, 448], "viewer/tree.js": [233, 310], "viewer/agents.js": [61, 140], "viewer/index.js": [40, 60], "hooks/claude_gui_hook.py": [88, 160]}}
+</script>
+<script type="module" src="./src/app.js"></script>
+<noscript><p class="err">This page needs JavaScript to draw the views.</p></noscript>
+
+</body></html>

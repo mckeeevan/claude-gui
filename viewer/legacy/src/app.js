@@ -1,0 +1,325 @@
+// Page wiring: reads the two files, builds the model and calls each view.
+// This is the only module that touches `document`, `window` or the clock.
+import { select } from "d3";
+import { load as parseYaml } from "js-yaml";
+import { buildModel, parseEvents, layoutStructure, relations, formatAgo, summarize, flattenTodos, timelineData, COVERAGE_BANDS, COVERAGE_LABEL } from "./model.js";
+import { structureMap, coverageColor } from "./structure-chart.js";
+import { agentTimeline } from "./agent-chart.js";
+import { todoList, stackedBar, activityFeed, agentCard, testsPanel } from "./panels.js";
+import { DEMO_SCRIPT } from "./demo.js";
+
+const CFG = { state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", poll: 1000, ...(window.CLAUDE_GUI || {}) };
+const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+const elk = window.ELK ? new window.ELK() : null;
+
+let state = null;
+let events = [];
+let coverage = null; // parsed coverage.json, written by the hook after a test run
+let lastCoverageText = null;
+let lens = "work";
+let mode = "starting";
+let lastStateText = null;
+let lastEventsText = null;
+let seenEvents = 0;
+let firstRender = true;
+let layout = null;
+let renderToken = 0;
+let model = null;
+let hover = null; // { kind: "part" | "todo" | "agent" | "event" | "test", id }
+let pinned = null; // agent id whose card was opened by a click
+const collapsed = new Set();
+const expanded = new Set();
+const todoCollapsed = new Set();
+const todoExpanded = new Set();
+
+const toggle = (folded, id, open, closed) => {
+  if (folded) { closed.delete(id); open.add(id); } else { open.delete(id); closed.add(id); }
+};
+
+const map = structureMap()
+  .onToggle((id) => {
+    const node = layout?.nodes.find((n) => n.id === id);
+    if (!node) return;
+    toggle(!node.container, id, expanded, collapsed);
+    render();
+  })
+  .onHover((id) => setHover(id && { kind: "part", id }))
+  .agentInfo((id) => model?.agents.find((a) => a.id === id))
+  .onAgentHover((id, el) => { setHover(id && { kind: "agent", id }); showCard(id, el); })
+  .onAgentClick((id, el) => pinCard(id, el));
+const timeline = agentTimeline()
+  .onHover((target, el) => { setHover(target); showCard(target?.kind === "agent" ? target.id : null, el); })
+  .onAgentClick((id, el) => pinCard(id, el))
+  .partName((id) => model?.byId.get(id)?.name ?? id);
+const todos = todoList()
+  .collapsed(todoCollapsed)
+  .expanded(todoExpanded)
+  .onHover((key) => setHover(key && { kind: "todo", id: key }))
+  .onToggle((key, folded) => { toggle(folded, key, todoExpanded, todoCollapsed); render(); });
+const partsBar = stackedBar().onHover((st) => setHover(st && { kind: "status", id: st }));
+const todoBar = stackedBar()
+  .order(["done", "in_progress", "blocked", "pending"])
+  .labels({ done: "Done", in_progress: "In progress", blocked: "Blocked", pending: "To do" })
+  .onHover((st) => setHover(st && { kind: "todo-status", id: st }));
+const feed = activityFeed().onHover((i) => setHover(i != null && { kind: "event", id: i }));
+const testsView = testsPanel().formatAgo(formatAgo).color(coverageColor).onHover((target) => setHover(target));
+const covBar = stackedBar().order(COVERAGE_BANDS).labels(COVERAGE_LABEL)
+  .onHover((band) => setHover(band && { kind: "coverage", id: band }));
+const card = agentCard().formatAgo(formatAgo).onClose(() => { pinned = null; showCard(null); });
+
+// Linked highlighting: whatever the person points at, every panel lights up
+// what is related to it and fades the rest.
+function setHover(target) {
+  hover = target || null;
+  applyHighlight();
+}
+function applyHighlight() {
+  const rel = model && hover ? relations(model, layout, hover) : null;
+  map.highlight(rel).refreshHighlight(select("#map"));
+  const mark = (sel, has) => sel.classed("dim", (d) => rel != null && !has(d)).classed("lit", (d) => rel != null && has(d));
+  mark(select("#todos").selectAll("li.todo"), (t) => rel.todos.has(t.key));
+  mark(select("#agents").selectAll("g.lane"), (l) => rel.agents.has(l.id));
+  mark(select("#agents").selectAll("g.mark"), (m) => (hover?.kind === "event" ? m.i === hover.id
+    : rel.agents.has(m.agent) && (!m.node || rel.parts.has(layout?.visibleOf?.get(m.node) ?? m.node))));
+  const segOn = (kind) => (s) => hover?.kind === kind && hover.id === s.key;
+  select("#parts-bar").selectAll("div.seg").classed("dim", (s) => rel != null && !segOn("status")(s)).classed("lit", segOn("status"));
+  select("#todo-bar").selectAll("div.seg").classed("dim", (s) => rel != null && !segOn("todo-status")(s)).classed("lit", segOn("todo-status"));
+  select("#cov-bar").selectAll("div.seg").classed("dim", (s) => rel != null && !segOn("coverage")(s)).classed("lit", segOn("coverage"));
+  mark(select("#tests").selectAll(".weak li"), (d) => rel.parts.has(layout?.visibleOf?.get(d.id) ?? d.id));
+  select("#tests").select(".weak .untested").classed("dim", rel != null && !(hover?.kind === "coverage" && hover.id === "untested"));
+  mark(select("#tests").selectAll("li.failure"), (f) => rel.tests?.has(f.key));
+  mark(select("#tests").selectAll("li.suite:not(.untraced)"), (s) => rel.tests?.has(s.id));
+  mark(select("#tests").selectAll("li.suite:not(.untraced) li.failure"), (f) => rel.tests?.has(f.key));
+  mark(select("#feed").selectAll("li.ev"), (e) =>
+    (e.node && rel.parts.has(layout?.visibleOf?.get(e.node) ?? e.node)) || rel.agents.has(String(e.agent)));
+}
+
+// The explainer card follows the pointer; a click pins it open with every skill.
+function showCard(id, el) {
+  if (pinned && id !== pinned) return;
+  const host = select("#card");
+  const agent = id && model?.agents.find((a) => a.id === id);
+  if (!agent || !el) { if (!pinned) host.attr("hidden", ""); return; }
+  const todoCount = flattenTodos(model.todos, { collapsed: null }).filter((t) => t.owner === id).length;
+  host.attr("hidden", null).datum({
+    agent, todoCount, now: Date.now(), pinned: pinned === id,
+    partName: (pid) => model.byId.get(pid)?.name ?? pid,
+  }).call(card);
+  const r = el.getBoundingClientRect();
+  const node = host.node();
+  const w = node.offsetWidth;
+  const h = node.offsetHeight;
+  const left = Math.min(window.innerWidth - w - 12, Math.max(12, r.left + r.width / 2 - w / 2));
+  const top = r.bottom + 10 + h < window.innerHeight ? r.bottom + 10 : Math.max(12, r.top - h - 10);
+  host.style("left", `${left}px`).style("top", `${top}px`);
+}
+function pinCard(id, el) {
+  pinned = pinned === id ? null : id;
+  showCard(pinned ? id : null, el);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && pinned) { pinned = null; showCard(null); } });
+document.addEventListener("click", (e) => {
+  if (pinned && !e.target.closest("#card") && !e.target.closest("g.token") && !e.target.closest("g.lane")) { pinned = null; showCard(null); }
+});
+window.addEventListener("scroll", () => { if (!pinned) select("#card").attr("hidden", ""); }, { passive: true });
+
+async function render() {
+  if (!state) return;
+  const token = ++renderToken;
+  const now = Date.now();
+  model = buildModel(state, events, { now, coverage });
+  const duration = firstRender || reduceMotion ? 0 : 700;
+  seenEvents = events.length;
+  firstRender = false;
+
+  renderHeader(model, now);
+
+  const agentsEl = document.getElementById("agents");
+  timeline.duration(reduceMotion ? 0 : duration).width(Math.max(220, agentsEl.clientWidth || 300));
+  select(agentsEl).datum(timelineData(model, { now })).call(timeline);
+  select("#agent-count").text(`${model.agents.filter((a) => a.status === "working").length} working`);
+
+  select("#todo-count").text(model.todoCounts.total ? `${model.todoCounts.done} of ${model.todoCounts.total} done` : "");
+  select("#todo-bar").datum(model.todoCounts).call(todoBar);
+  select("#todos").datum(model).call(todos);
+  select("#feed").datum(model).call(feed);
+  select("#tests").datum({ tests: model.tests, coverage: model.coverage, byId: model.byId, now }).call(testsView);
+  select("#cov-bar").datum(model.coverage.bands).call(covBar);
+
+  if (!elk) { showError("The layout library did not load, so the structure map cannot be drawn. Check the internet connection and reload."); return; }
+  const next = await layoutForSpace(model);
+  if (token !== renderToken) return; // a newer render started while ELK was working; drop this one
+  layout = next;
+  const host = select("#map");
+  host.selectAll("p.empty").data(layout.nodes.length ? [] : [null]).join("p").attr("class", "empty")
+    .text("No structure yet. Claude adds the app's parts under structure: as it learns them.");
+  map.duration(duration).lens(lens);
+  host.datum(layout).call(map);
+  // Fit the map to its column on wide screens, but never blow it up past its natural size.
+  // Narrow screens scroll the map at full size instead (text would drop under 10px), so the caps come off there.
+  const fitting = wide?.matches;
+  host.select("svg.map")
+    .style("max-width", fitting ? `min(100%, ${layout.width + 12}px)` : null)
+    .style("max-height", fitting ? `min(100%, ${layout.height + 26}px)` : null);
+  applyHighlight();
+  revealFocus(layout, model.focus);
+}
+
+// On a wide screen the map must fit its column, so lay it out both top-down and
+// left-to-right and keep whichever is drawn larger. The current direction is kept
+// unless the other is clearly better, so the map does not flip on small changes.
+let direction = "DOWN";
+const wide = window.matchMedia?.("(min-width: 1100px)");
+async function layoutForSpace(m) {
+  const opts = { elk, collapsed, expanded };
+  const box = document.querySelector(".map-scroll");
+  if (!wide?.matches || !box || !box.clientHeight) return layoutStructure(m, { ...opts, direction: "DOWN" });
+  const [down, right] = await Promise.all([layoutStructure(m, { ...opts, direction: "DOWN" }), layoutStructure(m, { ...opts, direction: "RIGHT" })]);
+  const fit = (l) => Math.min(box.clientWidth / (l.width + 12), box.clientHeight / (l.height + 26));
+  const [cur, other] = direction === "DOWN" ? [down, right] : [right, down];
+  if (fit(other) > fit(cur) * 1.15) direction = direction === "DOWN" ? "RIGHT" : "DOWN";
+  return direction === "DOWN" ? down : right;
+}
+// Work / Tests switch for the map: the same boxes, shaded by status or by test coverage.
+select(".lens").selectAll("button").on("click", function () {
+  lens = this.dataset.lens;
+  document.body.classList.toggle("lens-tests", lens === "tests");
+  select(".lens").selectAll("button").attr("aria-pressed", function () { return String(this.dataset.lens === lens); });
+  render();
+});
+
+// The fitted map can get small on a big plan; this button swaps to full size and back.
+select("#zoom").on("click", function () {
+  const full = !document.body.classList.contains("map-full");
+  document.body.classList.toggle("map-full", full);
+  select(this).attr("aria-pressed", String(full)).text(full ? "Fit to screen" : "Full size");
+});
+let resizeTimer = null;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 200); });
+
+// On a narrow screen the map scrolls sideways; bring the focus into view when it
+// changes, but leave the person's own scrolling alone otherwise.
+let revealed = null;
+function revealFocus(l, focus) {
+  if (!focus || focus === revealed) return;
+  const box = l.nodes.find((n) => n.id === focus);
+  const scroller = document.querySelector(".map-scroll");
+  if (!box || !scroller || scroller.scrollWidth <= scroller.clientWidth) return;
+  revealed = focus;
+  scroller.scrollTo({ left: Math.max(0, box.x + box.width / 2 - scroller.clientWidth / 2), behavior: reduceMotion ? "auto" : "smooth" });
+}
+
+function renderHeader(model, now) {
+  const claim = summarize(model);
+  select("#kicker").text(claim.kicker);
+  select("#headline").text(claim.headline);
+  select("#deck").text(claim.deck);
+  select("#updated").text(model.updatedAt ? `Updated ${formatAgo(model.updatedAt, now)}` : "");
+  select("#project").text(model.project);
+  const p = model.parts;
+  select("#num-parts").text(p.total ? `${Math.round((100 * p.done) / p.total)}%` : "–");
+  select("#num-parts-note").text(p.total ? `of ${p.total} parts done` : "no parts yet");
+  select("#num-todos").text(model.todoCounts.total ? `${model.todoCounts.done}/${model.todoCounts.total}` : "–");
+  select("#num-agents").text(model.agents.filter((a) => a.status === "working").length);
+  const t = model.tests;
+  select("#num-tests")
+    .attr("class", t.status === "failing" ? "bad" : t.status === "running" ? "hot" : "ok")
+    .text(t.status === "failing" ? (t.failed ? `✕ ${t.failed}` : "✕") : t.status === "running" ? "…" : t.passed != null ? `✓ ${t.passed}` : "–");
+  select("#num-tests-note").text(t.status === "failing" ? "tests failing" : t.status === "running" ? "tests running" : t.status === "passing" ? "tests passing" : "no test runs yet");
+  select("#parts-bar").datum(p).call(partsBar);
+
+  const crumbs = model.focusPath.map((id) => model.byId.get(id).name);
+  select("#crumb").selectAll("span")
+    .data(crumbs.length ? crumbs : ["No focus set"])
+    .join("span")
+    .classed("here", (d, i, all) => crumbs.length > 0 && i === all.length - 1)
+    .text((d) => d);
+  select("#thought").text(model.thinking || "Nothing written yet.");
+}
+
+function setConn(kind, text) {
+  select("#conn").attr("class", `conn conn-${kind}`);
+  select("#conn-text").text(text);
+}
+function showError(msg) { select("#error").attr("hidden", msg ? null : "").text(msg || ""); }
+
+async function fetchText(url) {
+  const r = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.text();
+}
+
+async function poll() {
+  let changed = false;
+  try {
+    const text = await fetchText(CFG.state);
+    if (text !== lastStateText) {
+      lastStateText = text;
+      try {
+        const parsed = parseYaml(text);
+        if (!parsed || typeof parsed !== "object") throw new Error("the file is empty");
+        state = parsed;
+        showError("");
+        changed = true;
+      } catch (err) {
+        // Claude may be halfway through an edit; keep showing the last version that parsed.
+        showError(`state.yaml did not parse, so the last good version is shown. ${String(err.message || err).split("\n")[0]}`);
+      }
+    }
+    try {
+      const text = await fetchText(CFG.events);
+      if (text !== lastEventsText) { lastEventsText = text; events = parseEvents(text); changed = true; }
+    } catch {
+      if (events.length) { events = []; changed = true; }
+    }
+    try {
+      const text = await fetchText(CFG.coverage);
+      if (text !== lastCoverageText) { lastCoverageText = text; coverage = JSON.parse(text); changed = true; }
+    } catch {
+      // No report yet (404) or one being rewritten; keep the last good one.
+    }
+    if (mode !== "live") { mode = "live"; firstRender = true; }
+    setConn("live", "Live");
+  } catch {
+    if (mode === "starting") { startDemo(); return; }
+    setConn("off", "Lost connection");
+  }
+  if (changed) render();
+  setTimeout(poll, CFG.poll);
+}
+
+// Re-render now and then even without changes, so heat cools and "ago" labels age.
+setInterval(() => { if (state) render(); }, 15000);
+
+function startDemo() {
+  mode = "demo";
+  setConn("demo", "Demo data");
+  const baseState = document.getElementById("demo-state").textContent;
+  const baseEvents = document.getElementById("demo-events").textContent;
+  try { coverage = JSON.parse(document.getElementById("demo-coverage").textContent); } catch { coverage = null; }
+  let step = 0;
+  const reset = () => {
+    state = parseYaml(baseState);
+    const parsed = parseEvents(baseEvents);
+    const last = parsed.length ? parsed[parsed.length - 1]._t : Date.now();
+    const shift = Date.now() - 4000 - last; // make the sample log end a few seconds ago
+    events = parsed.map((e) => ({ ...e, _t: e._t + shift, t: new Date(e._t + shift).toISOString() }));
+    state.updated = new Date().toISOString();
+    step = 0;
+    seenEvents = 0;
+    firstRender = true;
+    for (const s of [collapsed, expanded, todoCollapsed, todoExpanded]) s.clear();
+    render();
+  };
+  reset();
+  setInterval(() => {
+    if (step >= DEMO_SCRIPT.length) { reset(); return; }
+    const { patch, ...ev } = DEMO_SCRIPT[step++];
+    if (patch) { state = structuredClone(state); patch(state); state.updated = new Date().toISOString(); }
+    events = [...events, { ...ev, t: new Date().toISOString(), _t: Date.now(), _i: events.length }];
+    render();
+  }, 2800);
+}
+
+if (location.protocol === "file:") startDemo();
+else poll();
