@@ -128,6 +128,7 @@ export function stackedBar() {
  */
 export function activityFeed() {
   let limit = 60;
+  let filter = () => true;
   let onHover = () => {};
   let formatTime = (ms) => (ms == null ? "" : new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }));
   let seen = null; // keys from the previous call; null until the first call so nothing flashes on load
@@ -135,7 +136,7 @@ export function activityFeed() {
   function chart(selection) {
     selection.each(function ({ events, agents, byId }) {
       const agentById = new Map(agents.map((a) => [a.id, a]));
-      const rows = events.slice(-limit).reverse();
+      const rows = events.filter(filter).slice(-limit).reverse();
       const key = (e) => `${e._i}|${e.t ?? ""}`;
       const ul = select(this);
       ul.selectAll("li.empty").data(rows.length ? [] : [null]).join("li").attr("class", "empty")
@@ -173,6 +174,7 @@ export function activityFeed() {
     });
   }
   chart.limit = function (v) { if (!arguments.length) return limit; limit = v; return chart; };
+  chart.filter = function (v) { if (!arguments.length) return filter; filter = v; return chart; };
   chart.formatTime = function (v) { if (!arguments.length) return formatTime; formatTime = v; return chart; };
   chart.onHover = function (v) { if (!arguments.length) return onHover; onHover = v; return chart; };
   return chart;

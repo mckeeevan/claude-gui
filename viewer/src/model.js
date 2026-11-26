@@ -193,9 +193,12 @@ export function repairCommaSplits(value) {
  * state   parsed state.yaml (any shape; missing sections are treated as empty)
  * events  output of parseEvents
  * options now (ms), workingWindow (s an agent counts as working after its last
- *         event), heatHalfLife (s for a part's edit heat to halve)
+ *         event), heatHalfLife (s for a part's edit heat to halve),
+ *         agentWindow (s an agent stays "working" after its last event, even a
+ *         stop; defaults to workingWindow)
  */
-export function buildModel(state, events = [], { now = 0, workingWindow = 90, heatHalfLife = 60, coverage = null } = {}) {
+export function buildModel(state, events = [], { now = 0, workingWindow = 90, heatHalfLife = 60, agentWindow = null, coverage = null } = {}) {
+  const agentWin = agentWindow ?? workingWindow;
   const s = state && typeof state === "object" ? repairCommaSplits(state) : {};
   const session = s.session && typeof s.session === "object" ? s.session : {};
   const { roots, byId, parentOf, matchers } = normalizeStructure(s.structure);
@@ -277,10 +280,11 @@ export function buildModel(state, events = [], { now = 0, workingWindow = 90, he
     if (!status) {
       if (isPerson) status = "person";
       else if (type === "done") status = "done";
-      else if (type === "stop") status = "idle";
       // With no events at all, trust state.yaml: an agent placed on a part is working on it.
       else if (a.last == null && a.nodes.some((n) => byId.has(n))) status = "working";
-      else status = age < workingWindow ? "working" : "idle";
+      // A stop doesn't flip an agent to idle right away: it stays "working" for
+      // agentWindow seconds after its last event, so the roster doesn't churn.
+      else status = age < agentWin ? "working" : "idle";
     }
     // Where the agent stands on the map: the part it touched most recently, else the first part it was given.
     // Idle and finished agents stand nowhere, so the map parks them aside.

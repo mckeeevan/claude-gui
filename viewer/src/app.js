@@ -72,7 +72,27 @@ const todoBar = stackedBar()
   .order(["done", "in_progress", "blocked", "pending"])
   .labels({ done: "Done", in_progress: "In progress", blocked: "Blocked", pending: "To do" })
   .onHover((st) => setHover(st && { kind: "todo-status", id: st }));
-const feed = activityFeed().onHover((i) => setHover(i != null && { kind: "event", id: i }));
+// Feed volume: which kinds of events the feed shows. "all" is everything;
+// "key" drops the chatty bookkeeping (stop, note, state); "quiet" keeps only
+// the moments a person would want to see.
+const FEED_VOLUMES = {
+  all: () => true,
+  key: (e) => !["stop", "note", "state"].includes(e.type),
+  quiet: (e) => ["prompt", "edit", "run", "test", "spawn", "done", "message", "pr"].includes(e.type),
+};
+let feedVolume = localStorage.getItem("feed-volume") ?? "all";
+if (!FEED_VOLUMES[feedVolume]) feedVolume = "all";
+const feed = activityFeed().filter(FEED_VOLUMES[feedVolume]).onHover((i) => setHover(i != null && { kind: "event", id: i }));
+const volumeEl = document.getElementById("feed-volume");
+if (volumeEl) {
+  volumeEl.value = feedVolume;
+  volumeEl.addEventListener("change", () => {
+    feedVolume = volumeEl.value;
+    localStorage.setItem("feed-volume", feedVolume);
+    feed.filter(FEED_VOLUMES[feedVolume]);
+    render();
+  });
+}
 const testsView = testsPanel().formatAgo(formatAgo).color(coverageColor).onHover((target) => setHover(target));
 const covBar = stackedBar().order(COVERAGE_BANDS).labels(COVERAGE_LABEL)
   .onHover((band) => setHover(band && { kind: "coverage", id: band }));
@@ -154,7 +174,7 @@ async function render() {
   if (!state) return;
   const token = ++renderToken;
   const now = Date.now();
-  model = buildModel(state, events, { now, coverage });
+  model = buildModel(state, events, { now, coverage, agentWindow: 120 });
   const duration = firstRender || reduceMotion ? 0 : 700;
   seenEvents = events.length;
   firstRender = false;
