@@ -50,7 +50,8 @@ viewer/            the page
 hooks/
   claude_gui_hook.py      turns Claude Code hook events into events.jsonl lines, and warns Claude about bad state or missing coverage
   settings-snippet.json   the hook config install.py registers
-tools/artifact_state.py   logs events, patches state.yaml, converts coverage, packs live.json (for sessions without hooks)
+tools/artifact_state.py   logs events, patches state.yaml, converts coverage, packs live.json (for the artifact)
+tools/workview_guard.py   hook that reminds Claude, and blocks ending a turn, while the view is behind
 skill/SKILL.md     instructions Claude follows
 example/.claude-gui/      sample state.yaml, events.jsonl and coverage.json (the demo data)
 ```
@@ -67,18 +68,21 @@ To update a project: `git -C ~/claude-gui pull && python3 ~/claude-gui/install.p
 
 Then open http://localhost:8765. `install.py` puts the hook, viewer and skill in the project's `.claude/` (or `~/.claude/` with `--global`), registers the hook in `settings.json` without touching other settings, and starts `.claude-gui/` if it is missing. Claude does the rest from the skill: it fills in `state.yaml` and turns on test coverage.
 
-The hook also talks back to Claude: after an edit to `state.yaml` it flags values cut off by unquoted commas, and after a test run with no coverage report it tells Claude how to turn coverage on for that runner (once per session). The viewer also repairs names already cut at commas.
+A second hook, the Work View guard (`tools/workview_guard.py`), keeps Claude from letting the view fall behind: it reminds Claude when the view is 2 minutes behind its work, and blocks Claude from ending a turn until the view shows its latest step (once per turn, so it can't loop). In hooks mode "up to date" means `state.yaml` was updated; in artifact mode it means `workview/live` was written.
+
+The event hook also talks back to Claude: after an edit to `state.yaml` it flags values cut off by unquoted commas, and after a test run with no coverage report it tells Claude how to turn coverage on for that runner (once per session). The viewer also repairs names already cut at commas.
 
 ## Use it from claude.ai
 
-In a cloud session (no hooks) or to get a shareable link, drive a published claude.ai artifact instead of `serve.py`:
+In a cloud session, or to get a shareable link, drive a published claude.ai artifact instead of `serve.py`. The hooks are installed either way (Claude Code runs project hooks in cloud sessions too), so actions are still logged automatically; only the push to the artifact is Claude's job:
 
 ```bash
 python3 ~/claude-gui/install.py /path/to/project --artifact   # prints the steps below with real paths
 ```
 
 1. Publish once with the Artifact tool: page `viewer/index.html`, files `viewer/src/*.js`, and `capabilities: {"db": {"rules": [{"path": "workview", "read": "view", "write": "admin"}]}}`. Republish only when the viewer code changes; a new version reloads every open view.
-2. For every update, record it with `tools/artifact_state.py` (`log` an event, `set` a state patch, `coverage` after tests), pack it with `artifact_state.py live`, and write `.claude-gui/live.json` to the artifact database: ArtifactData `set`, collection `workview`, doc `live`, `if_version` from the last write. The page reads the document live and animates the change, with no reload.
+2. Save the artifact's URL to `.claude-gui/artifact-url`; this puts the guard in artifact mode.
+3. For every update, record it with `tools/artifact_state.py` (`log` an event, `set` a state patch, `coverage` after tests), pack it with `artifact_state.py live`, and write `.claude-gui/live.json` to the artifact database: ArtifactData `set`, collection `workview`, doc `live`, `if_version` from the last write. The page reads the document live and animates the change, with no reload.
 
 The page uses the database when it has one and falls back to polling `state/*.yaml|jsonl|json` files otherwise, so `serve.py` keeps working unchanged. It is still the zero-latency option when Claude runs on the same machine with the hooks installed.
 
@@ -92,7 +96,7 @@ After editing `index.template.html` or the example files, run `python3 viewer/bu
 - **"Waiting for data":** the artifact database didn't answer within 10 seconds. Reload; if it persists, check the artifact was published with the `db` capability.
 - **A warning bar about state.yaml:** the file didn't parse, so the last good version is shown. Fix the YAML, or rewrite it with `python3 tools/artifact_state.py set`.
 - **Coverage shows "no tests" or "tested, no %":** the tests don't write a coverage report yet. See "Turning on coverage" in the skill.
-- **Nothing moves when Claude works:** the hook isn't running (check `.claude/settings.json` has the Claude GUI entries, or rerun `install.py`), or, without hooks, Claude isn't logging with `artifact_state.py`.
+- **Nothing moves when Claude works:** the hooks aren't running (check `.claude/settings.json` has the `claude_gui_hook.py` and `workview_guard.py` entries, rerun `install.py`, then start a new session), or, in artifact mode, Claude hasn't pushed `workview/live`.
 
 ## Configuration
 
@@ -102,6 +106,7 @@ Set `window.CLAUDE_GUI` before `src/app.js` loads to change where the page reads
 
 ```
 cd viewer && npm install && npm test
+python3 -m unittest discover tools
 ```
 
 ## Still to do
