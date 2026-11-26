@@ -112,4 +112,6 @@ If the project has a Work View (`.claude-gui/` or `$WORKVIEW_DIR`), add the plan
 
 ## Talking to the person
 
+Start every reply with `## **Task Planner**: <task>`. Before each tool call, say in one short line what you are about to do and why.
+
 Don't paste plan content into the chat. Give brief status, and at the end ask the person to look over the phases and to-dos before anything is built (nothing is implemented until they say go). The main session then makes the design outline (see "Before starting" in `.claude/rules/implementing-plans.md`); if you can publish it yourself, do. Report: research verified, missing or updated; the files written (as links); and whether the plan is ready to implement.

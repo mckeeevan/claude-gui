@@ -30,9 +30,9 @@ Only the Claude Code variants were used. The Copilot (`.github/agents`), DSH (`.
 | Prompt safety: untrusted input as delimited data, no secrets, test prompts | Adopt, condensed | `base/rules/prompts-and-agents.md` (the 991-line guide's checklists, without the regex "sanitizer") |
 | Prompt file structure (`.prompt.md`) | Adapt | Claude Code slash commands in `.claude/commands/` |
 | Copilot handoffs, `#file`/`#fetch`/`${input:}`, `applyTo:` | Skip | Copilot-only |
-| "Declare intent before every tool call" | Skip | Noise in a project chat; Codex relaxed it too |
+| "Declare intent before every tool call" | Adopt (your choice) | One short line before each tool call: the `CLAUDE.md` section and both agents |
 | "Code on request only" | Skip | Doesn't fit an agent that edits files |
-| Researcher and planner opening every reply with a role banner | Skip | Conflicts with short replies |
+| Researcher and planner opening every reply with a role banner | Adopt (your choice) | `## **Task Researcher**: …` and `## **Task Planner**: …` |
 | Plan content never pasted into chat | Adopt | Fits short replies: plans are linked |
 | `model: sonnet` | Replace | `model: inherit`, so the agents use the session's model |
 | `uv`, testmon, docker compose, `services/api`, Fabric/Terraform examples | Skip | Project-specific; examples generalized |

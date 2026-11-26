@@ -7,6 +7,7 @@ This section is kept up to date by claude-gui's `install.py`; edit outside the m
 - `.claude/rules/testing.md`: tests that can fail, and the test-first cycle for new code.
 - Keep the Work View current (the `claude-gui-state` skill): `.claude-gui/state.yaml`, or `$WORKVIEW_DIR`.
 - Keep replies short: the result, the link, and anything the person needs to do.
+- Before each tool call, say in one short line what you are about to do and why.
 
 **When the task calls for it**
 - Asked to research, plan or scope something bigger than a quick fix: use the `task-researcher` and `task-planner` subagents (`.claude/agents/`). Planning files go in `.planning/`.
