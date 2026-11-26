@@ -13,9 +13,11 @@ What it does, all safe to repeat:
   - registers the event hook and the Work View guard in <.claude>/settings.json,
     leaving other settings and hooks alone
   - installs the working base (unless --no-base): task-researcher and task-planner subagents
-    in .claude/agents/, shared rules in .claude/rules/, and a "How to work here" section in
+    in .claude/agents/, shared rules in .claude/rules/, the /new-project command in
+    .claude/commands/, and a "How to work here" section in
     CLAUDE.md between markers. Files you have made your own (the marker line deleted) are
-    left alone, and a "## Checks" list of the project's test and build commands is added once
+    left alone. "## Checks" (the project's test and build commands) and "## Project" (stack and
+    layout notes) are added once; an empty checks list is filled in once commands exist
   - creates <project>/.claude-gui/ (or --dir) with a starter state.yaml and an empty events.jsonl,
     keeping any that already exist; --dir is saved as WORKVIEW_DIR in settings.json "env"
 
@@ -29,6 +31,7 @@ against the view falling behind; a hook just can't publish, so Claude pushes.
 import argparse
 import json
 import pathlib
+import re
 import shutil
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -90,6 +93,9 @@ def copy_tree(src, dst):
 
 
 BASE_MARK = "<!-- claude-gui base: install.py keeps this file up to date."
+NO_CHECKS = "- (none found yet: list the commands that must pass)"
+NO_PROJECT = ("(Not written yet. Run /new-project on a new project, or fill this in: what it is, the stack and "
+              "versions, the folder layout, naming and code conventions, and how to run it.)")
 BLOCK_START, BLOCK_END = "<!-- claude-gui:start -->", "<!-- claude-gui:end -->"
 
 
@@ -145,7 +151,7 @@ def detect_checks(project):
 def install_base(project):
     notes = []
     claude = project / ".claude"
-    for kind in ("agents", "rules"):
+    for kind in ("agents", "rules", "commands"):
         for src in sorted((HERE / "base" / kind).glob("*.md")):
             note = install_managed(src, claude / kind / src.name)
             if note:
@@ -153,10 +159,15 @@ def install_base(project):
     md = project / "CLAUDE.md"
     text = md.read_text(encoding="utf-8") if md.exists() else f"# {project.name}\n"
     text = merge_block(text, (HERE / "base" / "CLAUDE.block.md").read_text(encoding="utf-8"))
-    if "## Checks" not in text:
-        checks = detect_checks(project)
-        lines = [f"- `{c}`" for c in checks] or ["- (none found yet: list the commands that must pass)"]
-        text += "\n## Checks\n\nA phase is done when all of these pass:\n\n" + "\n".join(lines) + "\n"
+    checks = detect_checks(project)
+    lines = "\n".join(f"- `{c}`" for c in checks)
+    has = lambda heading: re.search(rf"^{heading}\s*$", text, re.M)  # a real heading, not a mention in the block
+    if not has("## Checks"):
+        text += "\n## Checks\n\nA phase is done when all of these pass:\n\n" + (lines or NO_CHECKS) + "\n"
+    elif NO_CHECKS in text and lines:
+        text = text.replace(NO_CHECKS, lines)  # an empty project has grown its first commands
+    if not has("## Project"):
+        text += "\n## Project\n\n" + NO_PROJECT + "\n"
     md.write_text(text, encoding="utf-8")
     return notes
 

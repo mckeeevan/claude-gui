@@ -82,7 +82,8 @@ The event hook also talks back to Claude: after an edit to `state.yaml` it flags
 
 - `.claude/agents/task-researcher.md` and `task-planner.md`: research before planning, plans in phases that can each be committed on their own, and an `/implement-<task>` command per plan. Planning files go in `.planning/`.
 - `.claude/rules/`: `coding.md`, `testing.md` (including the test-first cycle), `implementing-plans.md` and `prompts-and-agents.md`.
-- A "How to work here" section in `CLAUDE.md` between `<!-- claude-gui:start -->` markers, saying when each rule applies, plus a `## Checks` list of the project's test and build commands, detected once and then the project's to edit.
+- `.claude/commands/new-project.md`: `/new-project <what it's for>` sets up an empty project: it picks the stack, then (after your OK on the plan and outline) adds tests, coverage, lint, type checks, CI, the checks list and the project notes.
+- A "How to work here" section in `CLAUDE.md` between `<!-- claude-gui:start -->` markers, saying when each rule applies, plus a `## Checks` list of the project's test and build commands (detected once, filled in later if the project started empty, then the project's to edit) and a `## Project` section for the stack and layout.
 
 Planning stops once the phases, to-dos and a design outline (a Claude Design mockup, or an outline doc) are ready, for a go-ahead. After that, every phase runs and is committed to a work branch, and Claude stops again before merging. Rerunning `install.py` updates the base files; delete the marker line at the top of one to make it yours. Where these rules came from: [docs/agent-rules-merge.md](docs/agent-rules-merge.md).
 

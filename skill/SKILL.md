@@ -156,6 +156,8 @@ Event fields: `t` (ISO time), `agent`, `type` (prompt, read, edit, run, search, 
 
 Do all of this yourself; the person should not have to.
 
+**A new or empty project:** install (step 1), then run `/new-project` with what the project is for. It researches the stack, plans and outlines the setup, stops for the person's OK, then sets up tests, coverage, lint, type checks, CI, `## Checks` and `## Project`. The steps below are for an existing project.
+
 1. Install or update: `git clone https://github.com/mckeeevan/claude-gui ~/claude-gui` (or `git -C ~/claude-gui pull` if it is already there), then `python3 ~/claude-gui/install.py <project>`. It puts the hook, the viewer and this skill in the project's `.claude/`, registers the hook in `.claude/settings.json`, creates `.claude-gui/` with a starter `state.yaml`, and adds the working base (researcher and planner subagents, `.claude/rules/`, and a section in `CLAUDE.md`). Run it again to update; it never overwrites `state.yaml` or the event log.
 2. Fill in `state.yaml`: goal, a first sketch of the structure with `paths` for every part, agents and todos.
 3. Turn on coverage (see "Turning on coverage").
