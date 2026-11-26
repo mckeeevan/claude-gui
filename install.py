@@ -4,14 +4,16 @@
     python3 install.py /path/to/project            # hook, skill and viewer inside the project's .claude/
     python3 install.py /path/to/project --global   # hook and skill in ~/.claude/ for every project
     python3 install.py /path/to/project --artifact # no hooks: drive a claude.ai artifact instead
+    python3 install.py /path/to/project --dir /mnt/project-files/work-view --files-project chan_...
+        # claude.ai project: hooks log into the shared project folder, the page reads it directly
 
 What it does, all safe to repeat:
   - copies the hook script, tools/artifact_state.py and the viewer into <.claude>/claude-gui/
   - copies the skill to <.claude>/skills/claude-gui-state/SKILL.md
   - registers the event hook and the Work View guard in <.claude>/settings.json,
     leaving other settings and hooks alone
-  - creates <project>/.claude-gui/ with a starter state.yaml and an empty events.jsonl,
-    keeping any that already exist
+  - creates <project>/.claude-gui/ (or --dir) with a starter state.yaml and an empty events.jsonl,
+    keeping any that already exist; --dir is saved as WORKVIEW_DIR in settings.json "env"
 
 The per-project install is the one to use in cloud sessions, where ~ does not last.
 Then: python3 <.claude>/claude-gui/viewer/serve.py /path/to/project
@@ -69,11 +71,27 @@ Every update after that, don't publish (a new version reloads every open view):
 The page picks the document up live, with no reload.
 """
 
+FILES_NOTE = """
+The hooks write to {dir}, and the page reads it through the files capability, so
+the log, heartbeat and state.yaml reach it with no push. Publish as below, but
+skip saving artifact-url and the ArtifactData steps: editing state.yaml is the
+whole update.{sub}
+"""
+
 
 def copy_tree(src, dst):
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns("node_modules", "test", "package*.json", "*.template.html", "build.py"))
+
+
+def set_env(settings_path, key, value):
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        settings = {}
+    settings.setdefault("env", {})[key] = value
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 
 
 def add_hooks(settings_path, command_for):
@@ -102,6 +120,8 @@ def main():
     ap.add_argument("project", type=pathlib.Path)
     ap.add_argument("--global", dest="glob", action="store_true", help="install the hook and skill in ~/.claude instead")
     ap.add_argument("--artifact", action="store_true", help="also print the claude.ai artifact publish steps")
+    ap.add_argument("--dir", help="the state folder, e.g. a shared claude.ai project folder (saved as WORKVIEW_DIR)")
+    ap.add_argument("--files-project", help="claude.ai project id (chan_...): the page reads --dir through the files capability")
     a = ap.parse_args()
     project = a.project.expanduser().resolve()
     base = pathlib.Path.home() / ".claude" if a.glob else project / ".claude"
@@ -120,20 +140,30 @@ def main():
     add_hooks(base / "settings.json", lambda script: f"python3 ~/.claude/claude-gui/{script}" if a.glob
               else f'python3 "$CLAUDE_PROJECT_DIR/.claude/claude-gui/{script}"')
 
-    state = project / ".claude-gui"
-    state.mkdir(exist_ok=True)
+    if a.dir:
+        set_env(base / "settings.json", "WORKVIEW_DIR", a.dir)
+    state = project / (a.dir or ".claude-gui")  # an absolute --dir replaces the project path
+    state.mkdir(parents=True, exist_ok=True)
     if not (state / "state.yaml").exists():
         (state / "state.yaml").write_text(STARTER.format(name=project.name), encoding="utf-8")
     (state / "events.jsonl").touch()
 
     print(f"Claude GUI installed in {base}")
-    if not a.artifact:
+    if not a.artifact and not a.files_project:
         print(f"View it: python3 {home / 'viewer' / 'serve.py'} {project}")
         return
     viewer = home / "viewer"
     files = {f"src/{p.name}": str(p) for p in sorted((viewer / "src").glob("*.js"))}
+    caps = dict(CAPABILITIES)
+    if a.files_project:
+        # The page reads the shared folder itself, by its path inside the project folder.
+        caps["files"] = {"project": a.files_project}
+        d = (a.dir or "work-view").rstrip("/")
+        sub = d.split("/mnt/project-files/", 1)[1] if "/mnt/project-files/" in d else pathlib.PurePosixPath(d).name
+        print(FILES_NOTE.format(dir=a.dir or "(set --dir)", sub="" if sub == "work-view" else
+              f' The folder is not "work-view", so set window.CLAUDE_GUI = {{filesDir: "{sub}"}} in the page.'))
     print(ARTIFACT_STEPS.format(page=viewer / "index.html", files=json.dumps(files, indent=2),
-                                caps=json.dumps(CAPABILITIES), tool=home / "artifact_state.py"))
+                                caps=json.dumps(caps), tool=home / "artifact_state.py"))
 
 
 if __name__ == "__main__":

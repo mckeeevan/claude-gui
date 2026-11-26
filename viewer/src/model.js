@@ -1145,3 +1145,67 @@ export function agentCardsData(model, { now = 0, window = 600, gap = 60 } = {}) 
   idle.sort((x, y) => x.name.localeCompare(y.name));
   return { t0, t1, working, idle };
 }
+
+// ---- live sources -------------------------------------------------------------
+
+/**
+ * Merges event lists from several sources into one timeline, sorted by time.
+ * The same line read from two places (the shared log and the database copy) is
+ * kept once. An event the hook logged by itself (`auto: true`) gives way to one
+ * Claude wrote by hand for the same target within `slack` ms, which says more.
+ * Returns new objects with `_i` renumbered in timeline order.
+ */
+export function mergeEvents(lists, { slack = 2000 } = {}) {
+  const seen = new Set();
+  const all = [];
+  for (const list of lists) {
+    for (const e of list ?? []) {
+      const { _i, ...rest } = e;
+      const key = JSON.stringify(rest);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(rest);
+    }
+  }
+  const byTarget = new Map();
+  for (const e of all) {
+    if (e.auto || e._t == null) continue;
+    const k = String(e.target ?? "");
+    if (!byTarget.has(k)) byTarget.set(k, []);
+    byTarget.get(k).push(e._t);
+  }
+  const kept = all.filter((e) => !(e.auto && e._t != null &&
+    (byTarget.get(String(e.target ?? "")) ?? []).some((t) => Math.abs(t - e._t) <= slack)));
+  // Stable sort: events with no time keep their place after the timed ones before them.
+  const order = kept.map((e, i) => ({ e, i, t: e._t ?? -Infinity }));
+  let last = -Infinity;
+  for (const o of order) { if (o.e._t == null) o.t = last; else last = o.t; }
+  order.sort((a, b) => a.t - b.t || a.i - b.i);
+  return order.map((o, i) => ({ ...o.e, _i: i }));
+}
+
+/**
+ * Plans the next read of an append-only log, given the bytes already read and the
+ * file's size now. Returns null when nothing is new, `{ offset }` to read only the
+ * new tail, or `{ offset: 0, reset: true }` when the file shrank (it was trimmed),
+ * so it must be read again from the start.
+ */
+export function tailRead(known, size) {
+  if (known == null || size < known) return { offset: 0, reset: true };
+  return size === known ? null : { offset: known };
+}
+
+/** True while the last logged action is under `window` seconds old. */
+export function isLive(heartbeatMs, now, window = 60) {
+  return heartbeatMs != null && now - heartbeatMs >= 0 && now - heartbeatMs < window * 1000;
+}
+
+/**
+ * True when Claude is clearly working (a fresh heartbeat) but the to-dos and
+ * focus in state.yaml have not changed for `after` minutes: the view's
+ * hand-written half may be behind its automatic half.
+ */
+export function todosBehind({ heartbeatMs, stateMs, now }, { after = 10, window = 60 } = {}) {
+  if (!isLive(heartbeatMs, now, window) || stateMs == null) return false;
+  return heartbeatMs - stateMs > after * 60 * 1000;
+}

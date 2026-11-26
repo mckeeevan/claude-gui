@@ -2,7 +2,8 @@
 """Work View guard: makes sure Claude never lets the live view fall behind.
 
 A Claude Code hook (stdlib only; it never raises and never blocks on its own
-errors). It only acts in projects with a .claude-gui/ folder.
+errors). It only acts in projects with a .claude-gui/ folder, or WORKVIEW_DIR set
+(the same folder the event hook writes to).
 
 It keeps two times in .claude-gui/.guard.json:
   work  the last real step: a file edit outside .claude-gui/, or a significant
@@ -13,8 +14,9 @@ It keeps two times in .claude-gui/.guard.json:
           logs actions; only Claude can keep todos, focus and thinking current)
 
 Then:
-  PostToolUse        records work and pushes; when the view is over 2 minutes
-                     behind, reminds Claude (at most once a minute)
+  PostToolUse        records work and pushes; reminds Claude when the view is
+                     over 2 minutes behind (at most once a minute) or after every
+                     6 steps it hasn't seen. A tool call is never blocked.
   Stop               blocks ending the turn while work is newer than the last
                      push, once per stop (stop_hook_active), so it cannot loop
   UserPromptSubmit   in artifact mode, restates the rule in one line, so it
@@ -31,6 +33,7 @@ import time
 STATE_DIR = ".claude-gui"
 BEHIND = 120        # seconds before a reminder
 REMIND_EVERY = 60   # seconds between reminders
+NAG_STEPS = 6       # steps since the last push that earn a reminder, whatever the time
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SIGNIFICANT = re.compile(
     r"\bgit\s+(commit|push|merge|rebase)\b|\bgh\s+pr\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|build|lint|typecheck)\b"
@@ -57,7 +60,12 @@ def out(obj):
     print(json.dumps(obj))
 
 
-def is_push(tool, ti, artifact):
+def state_dir(root):
+    d = os.environ.get("WORKVIEW_DIR")
+    return os.path.join(root, d) if d else os.path.join(root, STATE_DIR)
+
+
+def is_push(tool, ti, artifact, d):
     if artifact:
         if "ArtifactData" not in tool:
             return False
@@ -66,15 +74,26 @@ def is_push(tool, ti, artifact):
         blob = json.dumps(ti)
         return "workview" in blob and "live" in blob
     if tool in EDIT_TOOLS:
-        p = str(ti.get("file_path") or "").replace("\\", "/")
-        return p.endswith(f"{STATE_DIR}/state.yaml")
+        p = str(ti.get("file_path") or "")
+        return os.path.basename(p) == "state.yaml" and inside(p, d)
+    if tool == "Bash":  # artifact_state.py set rewrites state.yaml for Claude
+        cmd = str(ti.get("command") or "")
+        return "artifact_state.py" in cmd and " set" in cmd
     return False
 
 
-def is_work(tool, ti):
+def inside(p, d):
+    try:
+        a, b = os.path.abspath(p), os.path.abspath(d)
+        return os.path.commonpath([a, b]) == b
+    except ValueError:
+        return False
+
+
+def is_work(tool, ti, d):
     if tool in EDIT_TOOLS:
-        p = str(ti.get("file_path") or ti.get("notebook_path") or "").replace("\\", "/")
-        return bool(p) and f"/{STATE_DIR}/" not in f"/{p}"
+        p = str(ti.get("file_path") or ti.get("notebook_path") or "")
+        return bool(p) and not inside(p, d)
     if tool == "Bash":
         cmd = str(ti.get("command") or "")
         return bool(SIGNIFICANT.search(cmd)) and "artifact_state.py" not in cmd
@@ -91,7 +110,7 @@ def how(artifact):
 def main():
     data = json.load(sys.stdin)
     root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
-    d = os.path.join(root, STATE_DIR)
+    d = state_dir(root)
     if not os.path.isdir(d):
         return
     artifact = os.path.exists(os.path.join(d, "artifact-url"))
@@ -103,17 +122,22 @@ def main():
     if event == "PostToolUse":
         tool = data.get("tool_name") or ""
         ti = data.get("tool_input") or {}
-        if is_push(tool, ti, artifact):
+        if is_push(tool, ti, artifact, d):
             g["push"] = now
             g.pop("pending_since", None)  # the view caught up
-        elif is_work(tool, ti):
+            g["steps"] = 0
+        elif is_work(tool, ti, d):
             g["work"] = now
             g.setdefault("pending_since", now)  # the first step the view hasn't seen
+            g["steps"] = g.get("steps", 0) + 1
             behind = now - g["pending_since"]
-            if behind > BEHIND and now - g.get("reminded", 0) > REMIND_EVERY:
+            late = behind > BEHIND and now - g.get("reminded", 0) > REMIND_EVERY
+            many = g["steps"] % NAG_STEPS == 0
+            if late or many:
                 g["reminded"] = now
+                lag = f"{int(behind // 60)}+ min" if behind >= 60 else f"{g['steps']} steps"
                 out({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext":
-                     f"Work View is {int(behind // 60)}+ min behind what you have done. Bring it up to date now: {how(artifact)}."}})
+                     f"Work View is {lag} behind what you have done. Bring it up to date now: {how(artifact)}."}})
         save(path, g)
         return
 

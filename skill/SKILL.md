@@ -11,12 +11,12 @@ The person watches the Work View live. For the whole session, including after a 
 
 - **Every action shows up as it happens**: each read, edit, command, test run, commit, push, agent start or finish, and message. Never batch, and never plan to "catch up later".
 - **A reply to the person is a step too.** Bring the view up to date before the reply goes out: todos, focus and thinking in `state.yaml`, and in artifact mode a push of `workview/live`.
-- **The guard hook enforces this.** It reminds you when the view falls 2 minutes behind, and blocks ending your turn while you have done work the view hasn't seen. When it fires, update the view, then carry on. Don't argue with it or work around it.
+- **The guard hook enforces this.** It reminds you when the view falls 2 minutes or 6 steps behind, and blocks ending your turn while you have done work the view hasn't seen. When it fires, update the view, then carry on. Don't argue with it or work around it.
 
-A live page (the Claude GUI viewer) draws what you are working on from two files in the project's `.claude-gui/` folder:
+A live page (the Claude GUI viewer) draws what you are working on from two files in the project's `.claude-gui/` folder (or `$WORKVIEW_DIR` when it is set):
 
 - `state.yaml` is **your picture of the work**. You edit it by hand. It holds the parts that need judgment: the goal, what you're thinking, the app's structure, agents' roles and the todo list.
-- `events.jsonl` is **the timestamped log of what happened**. Hooks append to it automatically: every file read and edit, every command, every subagent start and stop, every prompt. Do not rewrite it. You may append a line for things hooks can't see (see "Messages" below).
+- `events.jsonl` is **the timestamped log of what happened**. Hooks append to it automatically (marked `auto: true`): every file read and edit, every command, test run, subagent start and stop, prompt, message and pull request. They also touch `heartbeat`, so the page can tell "working now" from "idle", and move old lines to `history/` once the log passes 200 KB. Do not rewrite it. You may append a line for things hooks can't see (see "Messages" below).
 
 The person watches the page while you work, so keep `state.yaml` honest and current. Small, frequent edits are better than one big rewrite.
 
@@ -28,7 +28,8 @@ Decide at the start of every task, without asking the person, and set it up if i
 2. **Pick the mode.**
    - **Hooks + local page**: Claude runs on the person's own machine and they will open the page there. Run `python3 ~/claude-gui/install.py <project>` (once per project; again to update). Hooks log your actions; serve the page with `python3 .claude/claude-gui/viewer/serve.py .` and give the person `http://localhost:8765`.
    - **claude.ai artifact**: a cloud session, or the person wants a link they can open anywhere. Run `python3 ~/claude-gui/install.py <project> --artifact` and follow "Running as a claude.ai artifact" below. If the project already has a Work View artifact (check `.claude-gui/artifact-url`, or list artifacts), keep using it; otherwise publish one and save its URL to `.claude-gui/artifact-url`, which switches the guard to artifact mode.
-   - Both modes install the hooks. Claude Code runs project hooks in cloud sessions too, so actions are logged for you; after installing, start a new session or check `/hooks` if they don't fire yet.
+   - **claude.ai project folder**: the session runs in a claude.ai project with a shared folder (`/mnt/project-files/`). Run `python3 ~/claude-gui/install.py <project> --dir /mnt/project-files/work-view --files-project <the project's chan_ id>`. The hooks write straight into that folder and the published page reads it through the `files` capability, so the log is never behind and nothing needs pushing: your only job is `state.yaml`. Don't save `artifact-url` in this mode. Prefer this over the plain artifact whenever the folder exists.
+   - All modes install the hooks. Claude Code runs project hooks in cloud sessions too, so actions are logged for you; after installing, start a new session or check `/hooks` if they don't fire yet.
    - When unsure, use the artifact: it works everywhere.
 3. **Turn on coverage** if the tests don't already write a report (see "Turning on coverage").
 4. **Give the person the link** once, then keep it current without being asked.
@@ -143,13 +144,13 @@ Rules that keep the page readable:
 
 ## Messages
 
-Hooks log subagent starts (`spawn`) and finishes (`done`) as messages. When something passes between agents that the hooks can't see, such as a subagent's key finding, append one line to `events.jsonl`:
+Hooks log subagent starts (`spawn`) and finishes (`done`), messages you post to the person or other sessions (`message`) and pull requests you open (`pr`). When something passes between agents that the hooks can't see, such as a subagent's key finding, append one line to `events.jsonl`:
 
 ```bash
-echo '{"t":"'"$(date -Iseconds)"'","agent":"Explore","type":"message","to":"main","text":"Sessions are stored in Redis"}' >> .claude-gui/events.jsonl
+python3 .claude/claude-gui/artifact_state.py log message --agent Explore --to main --text "Sessions are stored in Redis"
 ```
 
-Event fields: `t` (ISO time), `agent`, `type` (prompt, read, edit, run, search, spawn, done, message, note, state, stop), and optionally `target` (file or command), `to` (agent), `node` (structure id) and `text`.
+Event fields: `t` (ISO time), `agent`, `type` (prompt, read, edit, run, search, spawn, done, message, pr, note, state, stop), and optionally `target` (file or command), `to` (agent), `node` (structure id) and `text`. A line you write for the same target within 2 seconds of a hook's line replaces it in the feed, so add `text` when you have something better to say than the hook.
 
 ## Setting up a project
 

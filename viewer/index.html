@@ -41,6 +41,10 @@ h1, h2, h3 { margin: 0; text-wrap: balance }
 .conn-off i { background: var(--red) }
 @keyframes beat { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--orange) 22%, transparent) } }
 #updated, #project { font: 400 12px var(--f-mono); color: var(--grey) }
+/* Always in the row, so showing it never shifts the masthead; it slides up as it fades in. */
+.behind { font: 500 12px var(--f-sans); color: var(--orange-ink); opacity: 0; transform: translateY(4px); visibility: hidden;
+  transition: opacity .45s ease, transform .45s ease, visibility 0s .45s }
+.behind.on { opacity: 1; transform: none; visibility: visible; transition: opacity .45s ease, transform .45s ease }
 h1 { font: 700 clamp(28px, 4.2vw, 44px)/1.08 var(--f-display); letter-spacing: -0.01em; max-width: 26ch }
 .deck { margin: 0; font-size: 17px; line-height: 1.45; color: var(--ink-soft); max-width: 62ch }
 .key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--ink-soft); margin-top: 4px }
@@ -562,6 +566,7 @@ body:not(.lens-tests) .key-tests, body.lens-tests .key-work, body:not(.lens-test
         <span class="conn conn-demo" id="conn"><i></i><span id="conn-text">Starting</span></span>
         <span id="project"></span>
         <span id="updated"></span>
+        <span class="behind" id="behind">To-dos may be behind</span>
       </div>
       <h1 id="headline">Loading what Claude is working on</h1>
       <p class="deck" id="deck"></p>

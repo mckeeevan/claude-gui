@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Claude GUI hook: turns Claude Code hook events into lines in .claude-gui/events.jsonl.
 
-It only does anything in projects that have a .claude-gui/ folder, so it is safe
-to install globally. It never blocks Claude: every error is swallowed and it
-always exits 0.
+It only does anything in projects that have a .claude-gui/ folder (or that set
+WORKVIEW_DIR, see state_dir), so it is safe to install globally. It never blocks
+Claude: every error is swallowed and it always exits 0.
+
+Besides the event line, every call touches `heartbeat` (the time of the last
+action, so a viewer can show "live"), and once events.jsonl passes 200 KB the
+older lines move to history/ and the last 400 stay.
 
 Each line it writes is one JSON object:
   {"t": ISO time, "agent": who, "type": what, "target": file or command,
@@ -20,11 +24,20 @@ import sys
 
 STATE_DIR = ".claude-gui"
 MAX_TEXT = 160
+TRIM_AT = 200_000   # bytes of events.jsonl before older lines move to history/
+KEEP = 400          # lines kept in events.jsonl after a trim
 
 READ_TOOLS = {"Read", "NotebookRead"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SEARCH_TOOLS = {"Grep", "Glob", "WebSearch", "WebFetch", "ToolSearch"}
 AGENT_TOOLS = {"Task", "Agent"}
+
+
+def state_dir(root):
+    """The folder the view reads. WORKVIEW_DIR overrides it (absolute, or relative to the project),
+    e.g. a claude.ai project folder like /mnt/project-files/work-view that the page reads directly."""
+    d = os.environ.get("WORKVIEW_DIR")
+    return os.path.join(root, d) if d else os.path.join(root, STATE_DIR)
 
 
 def short(s, n=MAX_TEXT):
@@ -198,7 +211,7 @@ def collect_coverage(root, max_age=900):
     if not files:
         return None
     out = {"t": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "source": rel(src, root), "files": files}
-    with open(os.path.join(root, STATE_DIR, "coverage.json"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(state_dir(root), "coverage.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh)
     return out
 
@@ -314,7 +327,7 @@ def detect_runner(cmd, root):
 
 def coverage_hint(data, root, cmd):
     """Tells Claude once per session how to turn coverage on, when a run wrote no report."""
-    marker = os.path.join(root, STATE_DIR, ".coverage-hint")
+    marker = os.path.join(state_dir(root), ".coverage-hint")
     session = data.get("session_id") or "-"
     try:
         with open(marker, encoding="utf-8") as fh:
@@ -396,13 +409,13 @@ def to_event(data, root):
     if tool in EDIT_TOOLS or tool in READ_TOOLS:
         path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
         target = rel(path, root)
-        if target and target.replace("\\", "/").startswith(STATE_DIR + "/"):
+        if path and in_state_dir(path, root):
             if tool in READ_TOOLS:
                 return None  # reading its own state file is noise
             snapshot(root)
-            if target.replace("\\", "/").endswith("state.yaml"):
+            if path.replace("\\", "/").endswith("state.yaml"):
                 try:
-                    with open(os.path.join(root, STATE_DIR, "state.yaml"), encoding="utf-8") as fh:
+                    with open(os.path.join(state_dir(root), "state.yaml"), encoding="utf-8") as fh:
                         problems = check_state(fh.read())
                     if problems:
                         say(name, "Claude GUI: .claude-gui/state.yaml needs a fix or the viewer shows it wrong: "
@@ -415,8 +428,8 @@ def to_event(data, root):
 
     if tool == "Bash":
         cmd = ti.get("command", "")
-        if STATE_DIR + "/events.jsonl" in cmd:
-            return None  # Claude appending its own events by shell
+        if "events.jsonl" in cmd or "artifact_state.py" in cmd:
+            return None  # Claude logging its own events by shell
         return {"agent": agent, "type": "run", "target": short(cmd, 80), "text": short(ti.get("description"), 80) or None}
 
     if tool in SEARCH_TOOLS:
@@ -424,17 +437,49 @@ def to_event(data, root):
         return {"agent": agent, "type": "search", "target": short(q, 80)}
 
     if tool.startswith("mcp__"):
-        return {"agent": agent, "type": "run", "target": tool.split("__", 2)[-1]}
+        op = tool.split("__", 2)[-1]
+        if op in ("post_message", "send_message", "message_coordinator", "message_thread"):
+            return {"agent": agent, "type": "message", "to": "user" if op == "post_message" else "peer",
+                    "text": short(ti.get("text") or ti.get("message"))}
+        if op == "create_pull_request":
+            return {"agent": agent, "type": "pr", "target": ti.get("head"), "text": short(ti.get("title"))}
+        return {"agent": agent, "type": "run", "target": op}
 
     return None
 
 
+def in_state_dir(path, root):
+    try:
+        return os.path.commonpath([os.path.abspath(os.path.join(root, path)), os.path.abspath(state_dir(root))]) \
+            == os.path.abspath(state_dir(root))
+    except ValueError:
+        return False  # different drives on Windows
+
+
+def trim(d):
+    """Keeps events.jsonl small for the page to read: past TRIM_AT bytes, older lines go to history/."""
+    path = os.path.join(d, "events.jsonl")
+    if os.path.getsize(path) < TRIM_AT:
+        return
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines(keepends=True)
+    hist = os.path.join(d, "history")
+    os.makedirs(hist, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    with open(os.path.join(hist, f"events-{stamp}.jsonl"), "a", encoding="utf-8") as fh:
+        fh.writelines(lines[:-KEEP])
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.writelines(lines[-KEEP:])
+    os.replace(tmp, path)  # a reader never sees a half-written file
+
+
 def snapshot(root):
     """Keep a timestamped copy of state.yaml each time Claude edits it, for replay later."""
-    src = os.path.join(root, STATE_DIR, "state.yaml")
+    src = os.path.join(state_dir(root), "state.yaml")
     if not os.path.exists(src):
         return
-    hist = os.path.join(root, STATE_DIR, "history")
+    hist = os.path.join(state_dir(root), "history")
     os.makedirs(hist, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     shutil.copy2(src, os.path.join(hist, f"state-{stamp}.yaml"))
@@ -446,8 +491,10 @@ def main():
     except Exception:
         return
     root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
-    state_dir = os.path.join(root, STATE_DIR)
-    if not os.path.isdir(state_dir):
+    d = state_dir(root)
+    if os.environ.get("WORKVIEW_DIR"):
+        os.makedirs(d, exist_ok=True)  # setting the variable is the opt-in
+    if not os.path.isdir(d):
         return  # project has not opted in
     ev = to_event(data, root)
     if not ev:
@@ -457,8 +504,12 @@ def main():
           **{k: v for k, v in ev.items() if v or v is False or v == 0 and k in ("passed", "failed")}}
     if data.get("session_id"):
         ev["session"] = data["session_id"]
-    with open(os.path.join(state_dir, "events.jsonl"), "a", encoding="utf-8") as f:
+    ev["auto"] = True  # logged by the hook, not by Claude; a hand-written line for the same step wins
+    with open(os.path.join(d, "events.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    with open(os.path.join(d, "heartbeat"), "w", encoding="utf-8") as f:
+        f.write(ev["t"])
+    trim(d)
 
 
 if __name__ == "__main__":

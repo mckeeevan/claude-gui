@@ -2,7 +2,7 @@
 """Keep .claude-gui/ current without hooks, and pack it for the claude.ai artifact.
 
 Use it where no hook runs (a cloud session, a claude.ai artifact). Every command
-works on the state folder (default .claude-gui, or --dir):
+works on the state folder (--dir, else $WORKVIEW_DIR, else .claude-gui):
 
   log TYPE [--agent A] [--target T] [--to B] [--node N] [--text X]
            [--ok | --failed-run] [--passed N] [--failed N]
@@ -23,7 +23,7 @@ works on the state folder (default .claude-gui, or --dir):
       with paths relative to ROOT (default: the current folder).
 
   live [--out FILE] [--max-events N]
-      Writes live.json ({state, events, coverage} as text) for the artifact
+      Writes live.json ({state, events, coverage, heartbeat} as text) for the artifact
       database: ArtifactData set, collection "workview", doc "live",
       file_path = that file. Keeps the last N events (default 200) so the
       document stays well under the 256 KiB limit.
@@ -66,6 +66,7 @@ def cmd_log(a, d):
         ev["failed"] = a.failed or 0
     with open(d / "events.jsonl", "a", encoding="utf-8") as fh:
         fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    (d / "heartbeat").write_text(ev["t"], encoding="utf-8")
     print(json.dumps(ev, ensure_ascii=False))
 
 
@@ -176,6 +177,9 @@ def cmd_live(a, d):
     read = lambda name: (d / name).read_text(encoding="utf-8") if (d / name).exists() else ""
     lines = [l for l in read("events.jsonl").splitlines() if l.strip()]
     doc = {"state": read("state.yaml"), "events": "\n".join(lines[-a.max_events:]) + ("\n" if lines else "")}
+    beat = read("heartbeat").strip()
+    if beat:
+        doc["heartbeat"] = beat
     cov = read("coverage.json")
     if cov:
         doc["coverage"] = cov
@@ -190,7 +194,8 @@ def cmd_live(a, d):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dir", default=".claude-gui", help="the state folder (default .claude-gui)")
+    ap.add_argument("--dir", default=os.environ.get("WORKVIEW_DIR") or ".claude-gui",
+                    help="the state folder (default $WORKVIEW_DIR, else .claude-gui)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("log")
     p.add_argument("type")
