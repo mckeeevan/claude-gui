@@ -324,17 +324,22 @@ export function testsPanel() {
         return d;
       });
       top.select(".tnum.cov b").text(coverage?.pct != null ? pct(coverage.pct) : "–");
-      top.select(".tnum.cov span").text(coverage?.total ? "of lines covered" : coverage?.pct != null ? "covered (estimate)" : "no coverage yet");
+      top.select(".tnum.cov span").text(
+        coverage?.stale ? "stale — rerun tests to refresh"
+          : coverage?.total ? "of lines covered" : coverage?.pct != null ? "covered (estimate)" : "no coverage yet");
+      top.select(".tnum.cov").attr("class", `tnum cov${coverage?.stale ? " stale" : ""}`);
       top.select(".tnum.pass").attr("class", `tnum pass ${t.status}`);
       top.select(".tnum.pass b").text(
         t.status === "failing" ? `✕ ${t.failed || ""}`.trim()
           : t.status === "running" ? "…"
-          : t.status === "passing" ? `✓ ${t.passed ?? ""}`.trim() : "–",
+          : t.status === "passing" ? `✓ ${t.passed ?? ""}`.trim()
+          : t.status === "unknown" ? "?" : "–",
       );
       top.select(".tnum.pass span").text(
         t.status === "failing" ? (t.failed === 1 ? "test failing" : "tests failing")
           : t.status === "running" ? "running now"
-          : t.status === "passing" ? "tests pass" : "no runs yet",
+          : t.status === "passing" ? "tests pass"
+          : t.status === "unknown" ? "result unknown" : "no runs yet",
       );
 
       // ---- run strip ---------------------------------------------------------

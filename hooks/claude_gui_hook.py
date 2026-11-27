@@ -46,20 +46,49 @@ def short(s, n=MAX_TEXT):
 
 
 def rel(path, root):
+    """Project-relative path; files outside the project become ../<basename> (bug 8:
+    absolute paths outside the project leaked into the shareable event log)."""
     if not path:
         return None
     try:
-        p = os.path.relpath(os.path.abspath(path), root)
-        return path if p.startswith("..") else p
+        a, b = os.path.abspath(path), os.path.abspath(root)
+        if os.path.commonpath([a, b]) == b:
+            return os.path.relpath(a, b)
+        return os.path.join("..", os.path.basename(path))
     except ValueError:
-        return path
+        return os.path.basename(path)
+
+
+# Bug 7: secrets in bash commands leaked into the event log (artifact mode is
+# shareable by link). Redact at write time.
+REDACTIONS = [
+    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9\-_\.=+/]{8,}"), "Bearer <redacted>"),
+    (re.compile(r"(?i)\b(token|api[_-]?key|secret|password|passwd|auth)\b\s*[=:]\s*\S+"), r"\1=<redacted>"),
+    (re.compile(r"\b[A-Za-z0-9+.\-]+://[^/\s:@]+:[^/\s@]+@"), "<scheme>://<redacted>@"),
+    (re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b"), "<redacted-base64>"),
+]
+
+
+def redact(text):
+    for rx, sub in REDACTIONS:
+        text = rx.sub(sub, text)
+    return text
 
 
 # Commands that run tests. Matching is loose on purpose: a false positive only adds a test run to the page.
-TEST_CMD = re.compile(
-    r"(^|[\s;&|(])(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\b(pytest|jest|vitest|mocha|rspec|phpunit|ctest|tox|nox)\b"
-    r"|\b(cargo|go|dotnet|mix|swift|deno)\s+test\b|\bnode\s+--test\b|\bpython3?\s+-m\s+(pytest|unittest)\b|\bmake\s+(test|check)\b"
-)
+# Bug 5: the regex lives in tools/shared_regex.py, shared with the workview guard, so the
+# two can never disagree about what counts as a significant command.
+try:
+    from shared_regex import SIGNIFICANT as TEST_CMD
+except ImportError:  # installed as a hook, tools/ not on the path
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+    try:
+        from shared_regex import SIGNIFICANT as TEST_CMD
+    except ImportError:
+        TEST_CMD = re.compile(
+            r"(^|[\s;&|(])(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\b(pytest|jest|vitest|mocha|rspec|phpunit|ctest|tox|nox)\b"
+            r"|\b(cargo|go|dotnet|mix|swift|deno)\s+test\b|\bnode\s+--test\b|\bpython3?\s+-m\s+(pytest|unittest)\b|\bmake\s+(test|check)\b"
+        )
 
 # Summary lines from common runners: (regex, which group is passed, which is failed).
 SUMMARIES = [
@@ -96,6 +125,14 @@ def parse_test_output(text):
             break
     if passed is None:
         m = PYTEST.search(text)
+        if m:
+            counts = dict((k, int(v)) for v, k in re.findall(r"(\d+) (passed|failed|errors?)", m.group(1)))
+            passed = counts.get("passed", 0)
+            failed = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
+    if passed is None:
+        # pytest piped through `tail` loses the === separator lines; the bare
+        # summary "18 passed in 0.11s" / "1 failed, 17 passed in 0.2s" still parses.
+        m = re.search(r"((?:\d+ \w+, )*\d+ \w+) in [\d.]+s", text)
         if m:
             counts = dict((k, int(v)) for v, k in re.findall(r"(\d+) (passed|failed|errors?)", m.group(1)))
             passed = counts.get("passed", 0)
@@ -366,7 +403,7 @@ def to_event(data, root):
     agent = who(data)
 
     if name == "UserPromptSubmit":
-        return {"agent": "user", "type": "prompt", "to": "main", "text": short(data.get("prompt"))}
+        return {"agent": "user", "type": "prompt", "to": "main", "text": redact(short(data.get("prompt")))}
 
     if name == "PreToolUse" and tool in AGENT_TOOLS:
         target_agent = ti.get("subagent_type") or ti.get("name") or "general-purpose"
@@ -379,14 +416,24 @@ def to_event(data, root):
         return {"agent": "main", "type": "stop", "text": "Finished its turn"}
 
     if tool == "Bash" and is_test_command(ti.get("command")):
-        cmd = short(ti.get("command"), 80)
+        cmd = redact(short(ti.get("command"), 80))
         if name == "PreToolUse":
             return {"agent": agent, "type": "test_start", "target": cmd}
         if name in ("PostToolUse", "PostToolUseFailure"):
             passed, failed, names = parse_test_output(output_of(data))
-            # A failed exit with no failing count is still a failed run (a crash, a compile error).
-            ok = name == "PostToolUse" and not failed
+            # Tri-state (bug 1): a runner we can't parse used to render green
+            # because `not None` is True. Now a real count decides; a crashed
+            # exit is a failure; anything else is "unknown" (None) and tagged
+            # runner: unsupported so the viewer can show it grey.
+            if failed is not None or passed is not None:
+                ok = not failed
+            elif name == "PostToolUseFailure":
+                ok = False
+            else:
+                ok = None
             ev = {"agent": agent, "type": "test", "target": cmd, "ok": ok, "passed": passed, "failed": failed, "failures": names}
+            if ok is None:
+                ev["runner"] = "unsupported"
             try:
                 cov = collect_coverage(root)
                 if cov:
@@ -400,7 +447,7 @@ def to_event(data, root):
             except Exception:
                 pass  # a broken or unknown report never stops the run from being logged
             if not ok and not failed and not names:
-                ev["text"] = short(output_of(data).strip().splitlines()[-1] if output_of(data).strip() else "Test command failed", 120)
+                ev["text"] = redact(short(output_of(data).strip().splitlines()[-1] if output_of(data).strip() else "Test command failed", 120))
             return ev
 
     if name != "PostToolUse":
@@ -430,7 +477,7 @@ def to_event(data, root):
         cmd = ti.get("command", "")
         if "events.jsonl" in cmd or "artifact_state.py" in cmd:
             return None  # Claude logging its own events by shell
-        return {"agent": agent, "type": "run", "target": short(cmd, 80), "text": short(ti.get("description"), 80) or None}
+        return {"agent": agent, "type": "run", "target": redact(short(cmd, 80)), "text": short(ti.get("description"), 80) or None}
 
     if tool in SEARCH_TOOLS:
         q = ti.get("pattern") or ti.get("query") or ti.get("url") or ""
@@ -456,8 +503,10 @@ def in_state_dir(path, root):
         return False  # different drives on Windows
 
 
-def trim(d):
-    """Keeps events.jsonl small for the page to read: past TRIM_AT bytes, older lines go to history/."""
+def trim(d, lock_fh=None):
+    """Keeps events.jsonl small for the page to read: past TRIM_AT bytes, older lines go to history/.
+    Must run while holding the events lock (bug 2): a concurrent append between the read and
+    the rewrite used to vanish."""
     path = os.path.join(d, "events.jsonl")
     if os.path.getsize(path) < TRIM_AT:
         return
@@ -472,6 +521,23 @@ def trim(d):
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.writelines(lines[-KEEP:])
     os.replace(tmp, path)  # a reader never sees a half-written file
+    prune_history(hist)
+
+
+HISTORY_MAX = 50  # bug 3: history/ used to grow forever, one file per trim and per state edit
+
+
+def prune_history(hist):
+    """Cap history/ by count (oldest first) and by total size (10 MB)."""
+    try:
+        files = sorted(os.listdir(hist))
+        total = sum(os.path.getsize(os.path.join(hist, f)) for f in files)
+        while files and (len(files) > HISTORY_MAX or total > 10_000_000):
+            oldest = files.pop(0)
+            total -= os.path.getsize(os.path.join(hist, oldest))
+            os.remove(os.path.join(hist, oldest))
+    except OSError:
+        pass
 
 
 def snapshot(root):
@@ -483,6 +549,7 @@ def snapshot(root):
     os.makedirs(hist, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     shutil.copy2(src, os.path.join(hist, f"state-{stamp}.yaml"))
+    prune_history(hist)
 
 
 def main():
@@ -499,17 +566,25 @@ def main():
     ev = to_event(data, root)
     if not ev:
         return
-    # Drop empty fields, but keep ok=False and counts of 0, which carry meaning for test runs.
+    # Drop empty fields, but keep ok=False, ok=None (unknown runner) and counts of 0, which carry meaning.
     ev = {"t": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-          **{k: v for k, v in ev.items() if v or v is False or v == 0 and k in ("passed", "failed")}}
+          **{k: v for k, v in ev.items() if v or v is False or v is None and k == "ok" or v == 0 and k in ("passed", "failed")}}
     if data.get("session_id"):
         ev["session"] = data["session_id"]
     ev["auto"] = True  # logged by the hook, not by Claude; a hand-written line for the same step wins
+    # Bug 2: lock the append and the trim together so a concurrent hook can't
+    # append between trim's read and rewrite and lose its line.
+    import fcntl
     with open(os.path.join(d, "events.jsonl"), "a", encoding="utf-8") as f:
-        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            f.flush()
+            trim(d)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
     with open(os.path.join(d, "heartbeat"), "w", encoding="utf-8") as f:
         f.write(ev["t"])
-    trim(d)
 
 
 if __name__ == "__main__":

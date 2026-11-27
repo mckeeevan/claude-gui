@@ -34,11 +34,21 @@ STATE_DIR = ".claude-gui"
 BEHIND = 120        # seconds before a reminder
 REMIND_EVERY = 60   # seconds between reminders
 NAG_STEPS = 6       # steps since the last push that earn a reminder, whatever the time
+SESSION_TTL = 3600  # bug 4: guard state older than this is dropped, so an interrupted
+                    # session can never block a future session's Stop forever
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-SIGNIFICANT = re.compile(
-    r"\bgit\s+(commit|push|merge|rebase)\b|\bgh\s+pr\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|build|lint|typecheck)\b"
-    r"|\b(vitest|jest|pytest|tsc|mocha|playwright)\b|\bnode\s+--test\b|\bgo\s+test\b|\bcargo\s+(test|build|nextest)\b"
-)
+
+# Bug 5: the significant-command regex lives in one place now, shared with the
+# event hook, so the two can never disagree about what counts as real work.
+try:
+    from shared_regex import SIGNIFICANT, RESEARCH_TOOLS
+except ImportError:  # installed as a hook, tools/ not on the path
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+    try:
+        from shared_regex import SIGNIFICANT, RESEARCH_TOOLS
+    except ImportError:
+        SIGNIFICANT = re.compile(r"\bgit\s+(commit|push|merge|rebase)\b|\bgh\s+pr\b")
+        RESEARCH_TOOLS = frozenset({"Read", "Grep", "Glob", "WebSearch", "WebFetch"})
 
 
 def load(path):
@@ -63,6 +73,21 @@ def out(obj):
 def state_dir(root):
     d = os.environ.get("WORKVIEW_DIR")
     return os.path.join(root, d) if d else os.path.join(root, STATE_DIR)
+
+
+def session_state(path, session_id):
+    """Bug 4: the guard state is per session. The old single work/push pair meant an
+    interrupted session blocked every future session's Stop, once, forever."""
+    st = load(path)
+    if st.get("session") != session_id or time.time() - st.get("ts", 0) > SESSION_TTL:
+        st = {"session": session_id}
+    return st
+
+
+def save_state(path, session_id, st):
+    st["session"] = session_id
+    st["ts"] = time.time()
+    save(path, st)
 
 
 def is_push(tool, ti, artifact, d):
@@ -100,11 +125,29 @@ def is_work(tool, ti, d):
     return False
 
 
+def is_research(tool):
+    """Bug 6: the guard used to be blind to research. Reads and searches count as
+    work at a lower weight, so a long research-only stretch still gets a reminder."""
+    return tool in RESEARCH_TOOLS
+
+
 def how(artifact):
     if artifact:
         return ("log what you did (artifact_state.py log / set), run artifact_state.py live, then ArtifactData set "
                 "collection workview, doc_id live, file_path .claude-gui/live.json, if_version from your last write")
     return "update .claude-gui/state.yaml (todos, focus, thinking, tests) to match what you just did"
+
+
+def profile_settings(root):
+    """Strictness comes from profile.yaml (workview.behind_seconds / remind_every_seconds),
+    not from hardcoded constants, so a project can tune how naggy the guard is."""
+    try:
+        import yaml
+        with open(os.path.join(root, "profile.yaml"), encoding="utf-8") as fh:
+            wv = (yaml.safe_load(fh) or {}).get("workview") or {}
+        return int(wv.get("behind_seconds", BEHIND)), int(wv.get("remind_every_seconds", REMIND_EVERY))
+    except Exception:
+        return BEHIND, REMIND_EVERY
 
 
 def main():
@@ -113,9 +156,11 @@ def main():
     d = state_dir(root)
     if not os.path.isdir(d):
         return
+    behind_limit, remind_limit = profile_settings(root)
     artifact = os.path.exists(os.path.join(d, "artifact-url"))
     path = os.path.join(d, ".guard.json")
-    g = load(path)
+    session = data.get("session_id") or "default"
+    g = session_state(path, session)
     now = time.time()
     event = data.get("hook_event_name")
 
@@ -131,14 +176,22 @@ def main():
             g.setdefault("pending_since", now)  # the first step the view hasn't seen
             g["steps"] = g.get("steps", 0) + 1
             behind = now - g["pending_since"]
-            late = behind > BEHIND and now - g.get("reminded", 0) > REMIND_EVERY
+            late = behind > behind_limit and now - g.get("reminded", 0) > remind_limit
             many = g["steps"] % NAG_STEPS == 0
             if late or many:
                 g["reminded"] = now
                 lag = f"{int(behind // 60)}+ min" if behind >= 60 else f"{g['steps']} steps"
                 out({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext":
                      f"Work View is {lag} behind what you have done. Bring it up to date now: {how(artifact)}."}})
-        save(path, g)
+        elif is_research(tool):
+            # Bug 6: research counts at half weight, and never blocks a Stop.
+            g["research"] = g.get("research", 0) + 1
+            if g["research"] % (NAG_STEPS * 2) == 0 and now - g.get("reminded", 0) > remind_limit:
+                g["reminded"] = now
+                out({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext":
+                     f"You have taken {g['research']} research steps since the view was last updated. "
+                     f"If this is turning into real work, {how(artifact)}."}})
+        save_state(path, session, g)
         return
 
     if event == "Stop":

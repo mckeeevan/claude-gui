@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import { load as parseYaml } from "js-yaml";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import ELK from "elkjs/lib/elk.bundled.js";
 import {
   globToRe, toMs, parseEvents, buildModel, leafStats, isFolded, layoutStructure,
@@ -151,7 +154,7 @@ test("buildModel derives agent status from the last event", () => {
     { t: at(10), agent: "a", type: "edit" },
     { t: at(500), agent: "b", type: "edit" },
     { t: at(10), agent: "c", type: "done" },
-    { t: at(10), agent: "d", type: "stop" },
+    { t: at(200), agent: "d", type: "stop" }, // past the 2-minute working window, so idle
   ].map((e) => JSON.stringify(e)).join("\n"));
   const status = Object.fromEntries(buildModel({ agents: [{ id: "e", status: "waiting" }] }, events, { now: NOW }).agents.map((a) => [a.id, a.status]));
   assert.deepEqual(status, { e: "waiting", main: "idle", a: "working", b: "idle", c: "done", d: "idle" });
@@ -625,6 +628,20 @@ test("buildTests with no suites and no runs is not_run, and survives junk", () =
     assert.ok(["not_run", "failing"].includes(t.status));
     assert.ok(Array.isArray(t.suites) && Array.isArray(t.runs));
   }
+});
+
+test("golden: the example fixture's test events render as a failing run with real counts", () => {
+  // §9: use example/.claude-gui/ as fixtures. The newest test event there is a
+  // failing run (81 passed, 1 failed) with a named failure.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const raw = readFileSync(join(here, "..", "..", "example", ".claude-gui", "events.jsonl"), "utf8");
+  const events = parseEvents(raw);
+  const t = buildTests(undefined, events, new Map());
+  assert.equal(t.status, "failing");
+  assert.equal(t.passed, 81);
+  assert.equal(t.failed, 1);
+  const latest = t.runs[t.runs.length - 1];
+  assert.deepEqual(latest.failures, ["arrows start on their source box"]);
 });
 
 test("failures sit on their own part, else on the parts their suite covers, and roll up into groups", async () => {

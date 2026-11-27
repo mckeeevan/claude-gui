@@ -61,11 +61,24 @@ def cmd_log(a, d):
         if getattr(a, k):
             ev[k] = getattr(a, k)
     if a.type == "test":
-        ev["ok"] = not a.failed_run and not (a.failed or 0)
+        # Tri-state like the hook: a failed run is False, a counted pass is True,
+        # and no flag at all is None (unknown) so the viewer shows it grey.
+        if a.failed_run:
+            ev["ok"] = False
+        elif a.ok:
+            ev["ok"] = True
+        else:
+            ev["ok"] = None
         ev["passed"] = a.passed or 0
         ev["failed"] = a.failed or 0
+    # Lock the append so a concurrent hook write can't interleave a torn line.
+    import fcntl
     with open(d / "events.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
     (d / "heartbeat").write_text(ev["t"], encoding="utf-8")
     print(json.dumps(ev, ensure_ascii=False))
 
@@ -136,22 +149,30 @@ def cmd_set(a, d):
     except ImportError:
         sys.exit("`set` needs PyYAML: pip install pyyaml")
     path = d / "state.yaml"
-    state = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
-    state = state or {}
-    if a.patch:
-        patch = yaml.safe_load(a.patch)
-        if not isinstance(patch, dict):
-            sys.exit("the patch must be a mapping, e.g. '{session: {focus: x}}'")
-        state = merge(state, patch)
-    if a.remove:
-        state = remove_ids(state, set(a.remove))
-    state = repair(state, hook_module().KNOWN_KEYS)
-    state["updated"] = now()
-    # sort_keys=False keeps Claude's order; width keeps long thoughts on one line per value.
-    text = yaml.safe_dump(state, sort_keys=False, allow_unicode=True, width=100, default_flow_style=False)
-    tmp = path.with_suffix(".yaml.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)  # the viewer never reads a half-written file
+    # The whole read-merge-write runs under an exclusive lock, so two agents (or an
+    # agent and the hook) can't clobber each other's state.
+    import fcntl
+    lock = open(d / ".state.lock", "a")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        state = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+        state = state or {}
+        if a.patch:
+            patch = yaml.safe_load(a.patch)
+            if not isinstance(patch, dict):
+                sys.exit("the patch must be a mapping, e.g. '{session: {focus: x}}'")
+            state = merge(state, patch)
+        if a.remove:
+            state = remove_ids(state, set(a.remove))
+        state = repair(state, hook_module().KNOWN_KEYS)
+        state["updated"] = now()
+        # sort_keys=False keeps Claude's order; width keeps long thoughts on one line per value.
+        text = yaml.safe_dump(state, sort_keys=False, allow_unicode=True, width=100, default_flow_style=False)
+        tmp = path.with_suffix(".yaml.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)  # the viewer never reads a half-written file
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
     print(f"updated {path}")
 
 

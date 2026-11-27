@@ -4,7 +4,7 @@
 import { path as d3path, max, pairs, cumsum, bisectLeft } from "d3";
 
 export const NODE_STATUSES = ["active", "planned", "idea", "blocked", "done", "untouched"];
-export const TEST_STATUSES = ["failing", "running", "passing", "not_run"];
+export const TEST_STATUSES = ["failing", "running", "passing", "not_run", "unknown"];
 export const TODO_STATUSES = ["in_progress", "blocked", "pending", "done"];
 export const DEP_KINDS = ["calls", "data", "events"];
 
@@ -329,6 +329,9 @@ export function buildModel(state, events = [], { now = 0, workingWindow = 90, he
     .filter((e) => e.node && (e.type === "edit" || e.type === "write") && TEST_FILE.test(String(e.target ?? "")))
     .map((e) => e.node));
   const cov = buildCoverage(coverage, roots, matchers, tests, testFileNodes);
+  // Stale coverage (also-list): a report older than the newest test run no longer
+  // describes the code, so the page greys it out instead of showing it as current.
+  if (cov.t != null && tests.latest?.t != null && tests.latest.t > cov.t) cov.stale = true;
 
   return {
     project: String(s.project ?? "Claude Work View"),
@@ -467,7 +470,15 @@ export function buildTests(raw, events = [], byId = new Map(), { runningWindow =
     if (e.type === "test_start") { startedAt = e._t ?? null; continue; }
     const failed = num(e.failed);
     const failures = [].concat(e.failures ?? []).map(String);
-    const ok = e.ok == null ? !(failed || failures.length) : Boolean(e.ok);
+    // Tri-state (bug 1): ok === null means the runner's output couldn't be parsed,
+    // so the result is unknown — not a pass. Only a real count or an explicit
+    // ok decides; a run with no counts at all is unknown.
+    let ok;
+    if (e.ok === true) ok = true;
+    else if (e.ok === false) ok = false;
+    else if (failed != null || failures.length) ok = false;
+    else if (num(e.passed) != null) ok = true;
+    else ok = null;
     runs.push({ i: e._i, t: e._t ?? null, agent: e.agent == null ? null : String(e.agent), target: e.target ?? null,
       ok, passed: num(e.passed), failed: failed ?? (ok ? 0 : failures.length || null), failures, text: e.text ?? null,
       coverage: toFraction(e.coverage) });
@@ -475,7 +486,7 @@ export function buildTests(raw, events = [], byId = new Map(), { runningWindow =
   }
   const latest = runs.length ? runs[runs.length - 1] : null;
   const running = startedAt != null && (!now || (now - startedAt) / 1000 < runningWindow);
-  const cleared = Boolean(latest?.ok); // the newest run passed: earlier failures are fixed
+  const cleared = latest?.ok === true; // the newest run passed: earlier failures are fixed
 
   const seen = new Set();
   const suites = [];
@@ -512,7 +523,7 @@ export function buildTests(raw, events = [], byId = new Map(), { runningWindow =
   const passed = latest?.passed ?? (suites.some((s) => s.passed != null) ? suites.reduce((a, s) => a + (s.passed ?? 0), 0) : null);
   const failed = latest ? (latest.failed ?? (latest.ok ? 0 : null)) : suites.reduce((a, s) => a + s.failed, 0);
   const status = running ? "running"
-    : latest ? (latest.ok ? "passing" : "failing")
+    : latest ? (latest.ok === true ? "passing" : latest.ok === false ? "failing" : "unknown")
     : suites.some((s) => s.status === "failing") ? "failing"
     : suites.some((s) => s.status === "passing") ? "passing" : "not_run";
 
