@@ -718,6 +718,46 @@ test("buildCoverage maps report files to parts by their paths and rolls groups u
   assert.deepEqual([c.bands.good, c.bands.low, c.bands.untested, c.bands.total], [1, 1, 1, 3]);
 });
 
+test("buildCoverage marks non-code parts exempt and keeps them out of the bar", () => {
+  const state = { ...STATE, structure: [
+    { id: "docs", name: "Docs", paths: ["docs/**"] },
+    { id: "code", name: "Code", paths: ["code/**"], children: [
+      { id: "code.a", name: "A", paths: ["code/a.py"] },
+      { id: "code.md", name: "Notes", paths: ["code/notes.md"] },
+    ] },
+  ] };
+  const parts = { docs: { exempt: true }, "code.md": { exempt: true } };
+  const m = buildModel(state, [], { now: NOW, parts, coverage: { files: { "code/a.py": [9, 10] } } });
+  const c = m.coverage;
+  assert.equal(c.byNode.get("docs").band, "exempt");
+  assert.equal(c.byNode.get("code.md").band, "exempt");
+  assert.equal(c.byNode.get("code.a").band, "good");
+  // A group whose only real child is code is not exempt; an all-docs group is.
+  assert.equal(c.byNode.get("code").band, "good");
+  assert.equal(c.bands.exempt, 2);
+  // Exempt parts are excluded from the bar's total.
+  assert.equal(c.bands.total, 1);
+  assert.equal(c.bands.good, 1);
+});
+
+test("buildCoverage inherits exemption to descendants of an exempt part", () => {
+  // A group (ci) is marked exempt, but its child has no paths of its own, so
+  // the child is absent from parts.json. Exemption must still roll up: the
+  // child and the group are both exempt, not "untested".
+  const state = { ...STATE, structure: [
+    { id: "ci", name: "CI", paths: ["ci/**"], children: [
+      { id: "ci.lint", name: "config-lint workflow" },
+    ] },
+  ] };
+  const parts = { ci: { exempt: true } };
+  const m = buildModel(state, [], { now: NOW, parts, coverage: { files: {} } });
+  const c = m.coverage;
+  assert.equal(c.byNode.get("ci.lint").band, "exempt");
+  assert.equal(c.byNode.get("ci").band, "exempt");
+  assert.equal(c.bands.exempt, 2);
+  assert.equal(c.bands.total, 0);
+});
+
 test("buildCoverage counts a part a suite covers as tested even without line data", () => {
   const m = buildModel({ ...STATE, tests: [{ id: "s", nodes: ["docs"], passed: 1 }] }, [], { now: NOW });
   assert.equal(m.coverage.byNode.get("docs").band, "tested");

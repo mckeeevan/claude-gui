@@ -403,7 +403,7 @@ export function testsPanel() {
 
       // ---- least covered parts -----------------------------------------------
       // Measured parts, weakest first; parts with no tests at all get one line of their own.
-      const all = coverage ? [...coverage.byNode.entries()].filter(([, c]) => c.leaves === 1).map(([id, c]) => ({ id, ...c })) : [];
+      const all = coverage ? [...coverage.byNode.entries()].filter(([, c]) => c.leaves === 1 && c.band !== "exempt").map(([id, c]) => ({ id, ...c })) : [];
       const leaves = all.filter((d) => d.pct != null).sort((a, b) => a.pct - b.pct).slice(0, weakest);
       const none = all.filter((d) => !d.tested);
       const wk = root.selectAll("div.weak").data([null]).join((e) => {

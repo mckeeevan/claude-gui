@@ -12,7 +12,7 @@ import { splitters } from "./splitters.js";
 import { minimap, viewportOf, scrollToCenter } from "./minimap.js";
 
 const CFG = {
-  state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", heartbeat: "state/heartbeat", poll: 1000,
+  state: "state/state.yaml", events: "state/events.jsonl", coverage: "state/coverage.json", parts: "state/parts.json", heartbeat: "state/heartbeat", poll: 1000,
   dbDoc: "workview/live",
   filesDir: "work-view", filesPoll: 2000, // a folder in the claude.ai project, read when the page declares the files capability
   ...(window.CLAUDE_GUI || {}),
@@ -23,6 +23,7 @@ const elk = window.ELK ? new window.ELK() : null;
 let state = null;
 let events = [];
 let coverage = null; // parsed coverage.json, written by the hook after a test run
+let parts = null; // parsed parts.json: per-part file list + whether it needs no tests
 let lastCoverageText = null;
 let lens = "work";
 let mode = "starting";
@@ -174,7 +175,7 @@ async function render() {
   if (!state) return;
   const token = ++renderToken;
   const now = Date.now();
-  model = buildModel(state, events, { now, coverage, agentWindow: 120 });
+  model = buildModel(state, events, { now, coverage, parts, agentWindow: 120 });
   const duration = firstRender || reduceMotion ? 0 : 700;
   seenEvents = events.length;
   firstRender = false;
@@ -346,9 +347,9 @@ let connected = false;
 function take(name, raw) {
   sources[name] = { ...sources[name], ...raw };
   const pick = (k) => ORDER.map((n) => sources[n]?.[k]).find((v) => typeof v === "string");
-  const next = applyTexts({ state, events, coverage, texts }, { state: pick("state"), coverage: pick("coverage") }, parseYaml);
+  const next = applyTexts({ state, events, coverage, parts, texts }, { state: pick("state"), coverage: pick("coverage"), parts: pick("parts") }, parseYaml);
   if (next.texts.state !== texts.state) stateSeenAt = Date.now();
-  ({ state, coverage, texts } = next);
+  ({ state, coverage, parts, texts } = next);
   let changed = next.changed;
   let logChanged = false;
   for (const [n, src] of Object.entries(sources)) {
@@ -399,6 +400,7 @@ async function poll() {
     // Events, coverage and heartbeat are optional: a missing log is empty, a missing report keeps the last one.
     raw.events = await fetchText(CFG.events).catch(() => "");
     raw.coverage = await fetchText(CFG.coverage).catch(() => undefined);
+    raw.parts = await fetchText(CFG.parts).catch(() => undefined);
     raw.heartbeat = await fetchText(CFG.heartbeat).catch(() => undefined);
     goLive();
     changed = take("http", raw);

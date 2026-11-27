@@ -479,6 +479,7 @@ body:not(.lens-tests) .key-tests, body.lens-tests .key-work, body:not(.lens-test
 .sw.ramp { width: 44px; border: 0; background: linear-gradient(90deg, #DCEFEC, #8CCFC9, #2A9D97, #12496E) }
 .sw.tested { background: var(--paper-alt); border: 1.5px dashed #2A9D97 }
 .sw.hatch { background: repeating-linear-gradient(45deg, var(--paper-alt) 0 2px, var(--rule) 2px 4px) }
+.sw.exempt { background: #F4F1EA; border: 1px solid var(--rule-soft) }
 .seg-good { background: #12496E; color: var(--paper-alt) }
 .seg-partial { background: #2A9D97; color: var(--paper-alt) }
 .seg-low { background: #8CCFC9; color: var(--ink) }
@@ -491,6 +492,8 @@ body:not(.lens-tests) .key-tests, body.lens-tests .key-work, body:not(.lens-test
 .lens-tests .leaf.on-dark .name { fill: var(--paper-alt) }
 .lens-tests .leaf.on-dark .sub { fill: #DCEFEC }
 .lens-tests .leaf.cov-tested .box { stroke: #2A9D97; stroke-dasharray: 4 3; stroke-width: 1.5 }
+.lens-tests .leaf.cov-exempt .box { fill: #F4F1EA; stroke: var(--rule-soft); stroke-dasharray: none; stroke-width: 1 }
+.lens-tests .leaf.cov-exempt .sub { fill: var(--grey) }
 .lens-tests .leaf.failing .box { stroke: var(--red); stroke-width: 2.5; stroke-dasharray: none }
 .lens-tests .group .frame { stroke: var(--rule) }
 .lens-tests .group .name { fill: var(--ink) }
@@ -658,6 +661,7 @@ body:not(.lens-tests) .key-tests, body.lens-tests .key-work, body:not(.lens-test
           <span><i class="sw ramp"></i>0 → 100% covered</span>
           <span><i class="sw tested"></i>Tested, no %</span>
           <span><i class="sw hatch"></i>No tests</span>
+          <span><i class="sw exempt"></i>No tests needed</span>
           <span><i class="sw failing">✕</i>Failing</span>
         </div>
         <div class="key key-work" aria-label="Key">

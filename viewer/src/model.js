@@ -51,10 +51,10 @@ export function toMs(t) {
  * Returns { ...next, changed, error } where error is a one-line message or null.
  */
 export function applyTexts(prev, texts = {}, parse) {
-  const next = { state: prev.state ?? null, events: prev.events ?? [], coverage: prev.coverage ?? null, texts: { ...(prev.texts ?? {}) } };
+  const next = { state: prev.state ?? null, events: prev.events ?? [], coverage: prev.coverage ?? null, parts: prev.parts ?? null, texts: { ...(prev.texts ?? {}) } };
   let changed = false;
   let error = null;
-  const { state: st, events: ev, coverage: cov } = texts ?? {};
+  const { state: st, events: ev, coverage: cov, parts: pt } = texts ?? {};
   if (typeof st === "string" && st !== next.texts.state) {
     next.texts.state = st;
     try {
@@ -77,6 +77,13 @@ export function applyTexts(prev, texts = {}, parse) {
       next.texts.coverage = cov;
       changed = true;
     } catch { /* a half-written report: keep the last good one and try again next time */ }
+  }
+  if (typeof pt === "string" && pt !== next.texts.parts) {
+    try {
+      next.parts = pt.trim() ? JSON.parse(pt) : null;
+      next.texts.parts = pt;
+      changed = true;
+    } catch { /* a half-written parts file: keep the last good one */ }
   }
   return { ...next, changed, error };
 }
@@ -197,7 +204,7 @@ export function repairCommaSplits(value) {
  *         agentWindow (s an agent stays "working" after its last event, even a
  *         stop; defaults to workingWindow)
  */
-export function buildModel(state, events = [], { now = 0, workingWindow = 90, heatHalfLife = 60, agentWindow = null, coverage = null } = {}) {
+export function buildModel(state, events = [], { now = 0, workingWindow = 90, heatHalfLife = 60, agentWindow = null, coverage = null, parts = null } = {}) {
   const agentWin = agentWindow ?? workingWindow;
   const s = state && typeof state === "object" ? repairCommaSplits(state) : {};
   const session = s.session && typeof s.session === "object" ? s.session : {};
@@ -328,7 +335,7 @@ export function buildModel(state, events = [], { now = 0, workingWindow = 90, he
   const testFileNodes = new Set(annotated
     .filter((e) => e.node && (e.type === "edit" || e.type === "write") && TEST_FILE.test(String(e.target ?? "")))
     .map((e) => e.node));
-  const cov = buildCoverage(coverage, roots, matchers, tests, testFileNodes);
+  const cov = buildCoverage(coverage, roots, matchers, tests, testFileNodes, parts?.parts ?? parts);
   // Stale coverage (also-list): a report older than the newest test run no longer
   // describes the code, so the page greys it out instead of showing it as current.
   if (cov.t != null && tests.latest?.t != null && tests.latest.t > cov.t) cov.stale = true;
@@ -368,7 +375,7 @@ export function toFraction(v) {
 }
 
 export const COVERAGE_BANDS = ["good", "partial", "low", "tested", "untested"];
-export const COVERAGE_LABEL = { good: "80%+ covered", partial: "50–80%", low: "Under 50%", tested: "Tested, no %", untested: "No tests" };
+export const COVERAGE_LABEL = { good: "80%+ covered", partial: "50–80%", low: "Under 50%", tested: "Tested, no %", untested: "No tests", exempt: "No tests needed" };
 
 /** Paths that look like test files: test/ or spec/ dirs, *.test.ts, *_test.go, test_*.py. */
 export const TEST_FILE = /(^|\/)(tests?|__tests__|specs?)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go|rb)$|(^|\/)test_[^/]*\.py$/;
@@ -386,7 +393,7 @@ export const TEST_FILE = /(^|\/)(tests?|__tests__|specs?)\/|\.(test|spec)\.[cm]?
  * every part id (groups too, summed over their leaves) to
  * { covered, total, pct, tested, band }, and bands counts leaves per band.
  */
-export function buildCoverage(raw, roots = [], matchers = [], tests = null, testFileNodes = new Set()) {
+export function buildCoverage(raw, roots = [], matchers = [], tests = null, testFileNodes = new Set(), parts = null) {
   const files = raw && typeof raw === "object" && raw.files && typeof raw.files === "object" ? raw.files : {};
   const lines = new Map();
   for (const [path, v] of Object.entries(files)) {
@@ -400,7 +407,24 @@ export function buildCoverage(raw, roots = [], matchers = [], tests = null, test
   const suiteNodes = new Set([...(tests?.suites ?? []).flatMap((s) => s.nodes), ...testFileNodes]);
   const byNode = new Map();
   const bands = Object.fromEntries(COVERAGE_BANDS.map((b) => [b, 0]));
+  let exempt = 0;
   const band = (pct, tested) => (pct == null ? (tested ? "tested" : "untested") : pct >= 0.8 ? "good" : pct >= 0.5 ? "partial" : "low");
+  // A part whose files are all non-code (docs/config) needs no tests. Exemption
+  // inherits to descendants: a part's children may have no paths of their own,
+  // so a child of an exempt part is exempt too. Marked exempt and kept out of
+  // the coverage bar counts.
+  const exemptIds = new Set();
+  if (parts) {
+    const childrenOf = new Map();
+    const addDesc = (id) => {
+      exemptIds.add(id);
+      for (const c of childrenOf.get(id) ?? []) addDesc(c);
+    };
+    const collect = (nodes) => { for (const n of nodes || []) { if (!n.id) continue; childrenOf.set(n.id, n.children.map((c) => c.id)); collect(n.children); } };
+    collect(roots);
+    for (const [id, v] of Object.entries(parts)) if (v?.exempt) addDesc(id);
+  }
+  const isExempt = (id, pct) => exemptIds.has(id) && pct == null;
 
   // Returns a node's summed lines. Lines on a group's own paths count toward the group only
   // when none of its children claim them, which the deepest-match rule already ensures.
@@ -413,20 +437,29 @@ export function buildCoverage(raw, roots = [], matchers = [], tests = null, test
       if (total == null && n.coverage != null) { covered = n.coverage; total = 1; estimated = true; }
       const pct = total ? covered / total : null;
       const tested = pct != null || suiteNodes.has(n.id);
-      const r = { covered, total, pct, tested, estimated, band: band(pct, tested), leaves: 1, files: own?.files ?? 0 };
-      bands[r.band]++;
+      const exemptLeaf = isExempt(n.id, pct);
+      const r = { covered, total, pct, tested: exemptLeaf ? false : tested, estimated, band: exemptLeaf ? "exempt" : band(pct, tested), leaves: 1, files: own?.files ?? 0 };
+      if (r.band === "exempt") exempt += 1; else bands[r.band]++;
       byNode.set(n.id, r);
       return r;
     }
     const kids = n.children.map(walk);
     const own = lines.get(n.id);
+    // Exempt children (non-code) don't count toward the group's coverage.
+    const real = kids.filter((k) => k.band !== "exempt");
+    if (real.length === 0 && !own) {
+      exempt += 1;
+      const r = { covered: null, total: null, pct: null, tested: false, estimated: false, band: "exempt", leaves: kids.reduce((a, k) => a + k.leaves, 0) };
+      byNode.set(n.id, r);
+      return r;
+    }
     // Estimates count as one leaf-weight unit, report lines as lines; mixing them weights by leaf.
-    const measured = kids.filter((k) => k.total);
+    const measured = real.filter((k) => k.total);
     let covered = 0, total = 0;
     for (const k of measured) { covered += k.estimated ? k.covered : k.covered / k.total; total += 1; }
     if (own) { covered += own.covered / own.total; total += 1; }
     const pct = total ? covered / total : null;
-    const tested = kids.some((k) => k.tested) || suiteNodes.has(n.id);
+    const tested = real.some((k) => k.tested) || suiteNodes.has(n.id);
     const r = { covered: null, total: null, pct, tested, estimated: false, band: band(pct, tested), leaves: kids.reduce((a, k) => a + k.leaves, 0) };
     byNode.set(n.id, r);
     return r;
@@ -443,7 +476,7 @@ export function buildCoverage(raw, roots = [], matchers = [], tests = null, test
     // Overall: the report's own line ratio when there is one, else the mean of the parts' estimates.
     pct: total ? covered / total : leafPcts.length ? leafPcts.reduce((a, b) => a + b, 0) / leafPcts.length : null,
     byNode,
-    bands: { ...bands, total: COVERAGE_BANDS.reduce((a, b) => a + bands[b], 0) },
+    bands: { ...bands, total: COVERAGE_BANDS.reduce((a, b) => a + bands[b], 0), exempt },
   };
 }
 

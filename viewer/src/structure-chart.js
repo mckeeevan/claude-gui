@@ -166,7 +166,7 @@ export function structureMap() {
         .call((s) => tr(s).attr("transform", (d) => place(d)).attr("opacity", 1));
       containers.select("rect.frame").call((s) => tr(s).attr("width", (d) => d.width).attr("height", (d) => d.height));
       containers.select("text.name").text((d) => d.name);
-      containers.select("text.roll").text((d) => (lens === "tests" ? (d.coverage?.pct != null ? pctText(d.coverage.pct) : d.coverage?.tested ? "tested" : "no tests") : `${d.rollup.done}/${d.rollup.total}`)).call((s) => tr(s).attr("x", (d) => d.width - 12));
+      containers.select("text.roll").text((d) => (lens === "tests" ? (d.coverage?.band === "exempt" ? "no tests needed" : d.coverage?.pct != null ? pctText(d.coverage.pct) : d.coverage?.tested ? "tested" : "no tests") : `${d.rollup.done}/${d.rollup.total}`)).call((s) => tr(s).attr("x", (d) => d.width - 12));
       // Failure count sits left of the rollup, clear of any agent tokens in the header.
       containers.select("text.fails").text((d) => (d.failing ? `✕ ${d.failing} failing` : ""))
         .call((s) => tr(s).attr("x", (d) => d.width - 52));
@@ -238,7 +238,7 @@ export function structureMap() {
         .call(bindEvents)
         .call((s) => tr(s, easeCubicOut).attr("transform", (d) => place(d)).attr("opacity", 1));
       leafSel.select("rect.box").call((s) => tr(s).attr("width", (d) => d.width).attr("height", (d) => d.height))
-        .style("fill", (d) => (lens !== "tests" ? null : d.coverage?.pct != null ? coverageColor(d.coverage.pct) : d.coverage?.tested ? "#FFFFFF" : `url(#${id}-hatch)`));
+        .style("fill", (d) => (lens !== "tests" ? null : d.coverage?.band === "exempt" ? "#F4F1EA" : d.coverage?.pct != null ? coverageColor(d.coverage.pct) : d.coverage?.tested ? "#FFFFFF" : `url(#${id}-hatch)`));
       leafSel.select("rect.pulse").attr("width", (d) => d.width).attr("height", (d) => d.height);
       leafSel.select("rect.heat").call((s) => tr(s)
         .attr("y", (d) => d.height - 3)
@@ -301,6 +301,7 @@ export function structureMap() {
     const c = d.coverage;
     // In the tests lens the hover says exactly where the number came from, so a surprising one can be checked.
     const covLine = lens !== "tests" || !c ? null
+      : c.band === "exempt" ? "No tests needed — this part is docs or config, not code"
       : c.pct == null ? (c.tested ? "Covered by a test suite; no line counts" : "No tests and no coverage data")
       : c.estimated ? `${pctText(c.pct)} covered, Claude's estimate (no report covers this part)`
       : c.total != null ? `${c.covered} of ${c.total} lines run by tests, from ${c.files} ${c.files === 1 ? "file" : "files"}${coverageSource ? ` in ${coverageSource}` : ""}`
@@ -327,6 +328,7 @@ export function structureMap() {
   function subLine(d) {
     if (lens === "tests") {
       const c = d.coverage;
+      if (c?.band === "exempt") return "no tests needed";
       const p = c?.pct != null ? `${pctText(c.pct)}${c.estimated ? " est." : ""}` : null;
       if (d.failing) return `${p ?? (c?.tested ? "tested" : "no tests")} · failing`;
       return p ? `${p} covered` : c?.tested ? "tested, no %" : "no tests";
